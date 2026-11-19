@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use pk_cli_config::profile::ProfileName;
 use pk_cli_core::{dates, output, CliError, Money, Paged, RangeArgs};
+use pk_cli_secrets::Secret;
 use pk_med_records::dto::{kind, method, relationship};
 use pk_med_records::{
     create_export_file, Finished, Header, Organization, PatientContext, RawResource, RecordsExport, RecordsWriter,
@@ -28,7 +29,7 @@ use crate::client::{self, experience, Client};
 use crate::fhir;
 use crate::model::{prescription_id, Fill, Person, Prescription};
 use crate::portal::{self, CostedFill};
-use crate::session::SessionStore;
+use crate::session::{Session, SessionStore};
 use crate::site::SiteKeys;
 
 /// How many years back an export without `--since` reads: every one, so a
@@ -57,6 +58,13 @@ pub struct Env {
 
 impl Env {
     /// The binary's: the vault, www.caremark.com, one request a second.
+    /// Today as the run sees it: the override, else the local date.
+    pub fn today(&self) -> String {
+        self.today
+            .clone()
+            .unwrap_or_else(|| dates::fmt_iso(dates::today_local()))
+    }
+
     pub fn for_binary() -> Result<Env, CliError> {
         Ok(Env {
             sessions: SessionStore::open()?,
@@ -120,9 +128,9 @@ fn table(out: &mut dyn Write, rows: &[Value]) -> Result<(), CliError> {
     Ok(())
 }
 
-/// The checks a command's arguments get before the session is read: a
-/// refused command reads nothing.
-pub fn check_args(cli: &Cli) -> Result<(), CliError> {
+/// The checks a command's arguments get before the session is read, on
+/// `today` (`YYYY-MM-DD`): a refused command reads nothing.
+pub fn check_args(cli: &Cli, today: &str) -> Result<(), CliError> {
     let since = match &cli.command {
         Command::Rx(RxCmd::List(args)) => range(&args.range)?.0,
         Command::Costs(args) => range(&args.range)?.0,
@@ -138,7 +146,7 @@ pub fn check_args(cli: &Cli) -> Result<(), CliError> {
         _ => None,
     };
     if let Some(s) = since {
-        let (y, m, d) = dates::today_local();
+        let (y, m, d) = dates::parse_iso(today)?;
         let limit = shift((y - SINCE_LIMIT_YEARS, m, d));
         if s < limit {
             return Err(CliError::Usage(format!(
@@ -153,17 +161,14 @@ pub fn check_args(cli: &Cli) -> Result<(), CliError> {
 /// code is not 0 only for an export whose stream ended incomplete (the
 /// trailer carries the error).
 pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> Result<i32, CliError> {
-    check_args(cli)?;
+    let today = env.today();
+    check_args(cli, &today)?;
     let session = env.sessions.load(profile)?;
     let read_header = session.cookie_header.expose().to_string();
     let mut client = Client::new(&session, profile, &env.base, env.pace)?;
     if let Some(keys) = &env.keys {
         client = client.with_keys(keys.clone());
     }
-    let today = env
-        .today
-        .clone()
-        .unwrap_or_else(|| dates::fmt_iso(dates::today_local()));
     let ctx = Ctx { cli, client, today };
     let code = match &cli.command {
         Command::Patients(PatientsCmd::List) => patients(&ctx, out).map(|()| 0),
@@ -176,9 +181,10 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
         }
         _ => Err(CliError::Other("not a member-site command".into())),
     }?;
-    // Only after the command did what it was asked: an export that ended
-    // incomplete may have ended on a refused session.
-    if code == 0 {
+    // After the command did what it was asked, or after an export the
+    // site cut short (exit 5): its earlier answers' cookies are the
+    // session's. Not after a refused session (exit 3).
+    if code == 0 || code == 5 {
         write_back(&ctx.client, &env.sessions, profile, &read_header);
     }
     Ok(code)
@@ -187,7 +193,7 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
 /// [`run`] for a command line, resolving its profile as the binary does:
 /// for the in-process tests.
 pub fn run_args(cli: &Cli, env: &Env, out: &mut dyn Write) -> Result<i32, CliError> {
-    check_args(cli)?;
+    check_args(cli, &env.today())?;
     let store = pk_cli_config::ConfigStore::new(BIN).with_override(cli.config.clone());
     let profiles = store.load::<crate::app::Config>()?.profiles;
     let profile = crate::source::site_profile(cli, &profiles)?;
@@ -202,18 +208,26 @@ fn write_back(client: &Client, store: &SessionStore, profile: &ProfileName, read
     let Some(updated) = client.updated_cookie_header() else {
         return;
     };
-    let result = store.get(profile).and_then(|current| match current {
-        Some(current) if current.cookie_header.expose() == read_header => {
-            store.put(profile, &current.with_cookie_header(updated))
-        }
-        _ => Ok(()),
-    });
+    let result = store
+        .get(profile)
+        .and_then(|current| match rewritten(current.as_ref(), read_header, updated) {
+            Some(session) => store.put(profile, &session),
+            None => Ok(()),
+        });
     if let Err(e) = result {
         eprintln!(
             "warning: the session's updated cookies were not stored: {}",
             e.message()
         );
     }
+}
+
+/// The stored session with `updated` cookies, if it is still the one the
+/// command read (`read_header`): a newer sign-in meanwhile is left alone.
+fn rewritten(current: Option<&Session>, read_header: &str, updated: Secret) -> Option<Session> {
+    current
+        .filter(|c| c.cookie_header.expose() == read_header)
+        .map(|c| c.with_cookie_header(updated))
 }
 
 /// A `YYYY-MM-DD` date, zero-padded, so it compares as a string.
@@ -368,7 +382,8 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     let until = until.unwrap_or(&ctx.today).min(ctx.today.as_str()).to_string();
     let mut seen = HashSet::new();
     let mut fills = Vec::new();
-    let mut unmatched = 0;
+    let mut matched = HashSet::new();
+    let mut unmatched = HashSet::new();
     let mut error = None;
     'windows: for w in windows(since, &until) {
         let costed = match financial(ctx, &w) {
@@ -386,7 +401,13 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
                     break 'windows;
                 }
             };
-            unmatched += portal::add_costs(&mut found, p, &costed);
+            for (key, hit) in portal::add_costs(&mut found, p, &costed) {
+                if hit {
+                    matched.insert(key);
+                } else {
+                    unmatched.insert(key);
+                }
+            }
             for f in found {
                 if seen.insert(f.id.clone()) {
                     fills.push(f);
@@ -407,7 +428,9 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     fills.sort_by(|a, b| b.filled.cmp(&a.filled).then_with(|| a.id.cmp(&b.id)));
     Pull {
         fills,
-        unmatched,
+        // A fill on the day two windows share is in both; one matched in
+        // either is matched.
+        unmatched: unmatched.difference(&matched).count(),
         undated,
         error,
     }
@@ -698,10 +721,8 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
     let since = list_since(ctx, since, until.as_deref());
     let everyone = people(ctx)?;
     let who = who(&everyone, args.patient.as_deref())?;
-    let mut fills = fills(ctx, &who, &since, until.as_deref())?;
-    if let Some(n) = args.range.limit {
-        fills.truncate(n as usize);
-    }
+    let fills = fills(ctx, &who, &since, until.as_deref())?;
+    // The totals are the range's; --limit shortens only the rows.
     let counted: Vec<&Fill> = fills.iter().filter(|f| !f.reversed).collect();
     let sum = |pick: fn(&Fill) -> Option<Cents>| counted.iter().filter_map(|f| pick(f)).sum::<Cents>().money();
     let totals = CostTotals {
@@ -714,6 +735,7 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
     };
     let rows: Vec<Value> = fills
         .iter()
+        .take(args.range.limit.map_or(usize::MAX, |n| n as usize))
         .map(|f| {
             let row = CostRow {
                 filled: f.filled.clone(),
@@ -892,6 +914,20 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cookies_go_back_only_to_the_session_the_command_read() {
+        let read = Session::new(Secret::new("a=1".to_string()), Some("UA".into()));
+        let back = rewritten(Some(&read), "a=1", Secret::new("a=2".to_string())).unwrap();
+        assert_eq!(back.cookie_header.expose(), "a=2");
+        assert_eq!(back.captured_at, read.captured_at);
+        assert_eq!(back.user_agent.as_deref(), Some("UA"));
+        // A newer sign-in replaced it meanwhile: left alone.
+        let newer = Session::new(Secret::new("b=1".to_string()), None);
+        assert!(rewritten(Some(&newer), "a=1", Secret::new("a=2".to_string())).is_none());
+        // Signed out meanwhile: nothing comes back.
+        assert!(rewritten(None, "a=1", Secret::new("a=2".to_string())).is_none());
+    }
 
     #[test]
     fn windows_go_back_a_year_at_a_time() {

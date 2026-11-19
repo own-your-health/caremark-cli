@@ -413,10 +413,12 @@ fn same_fill(fill: &Fill, c: &CostedFill) -> bool {
 
 /// `fills` with the amounts the financial summary gave them, field by
 /// field where the claim gave none. Each costed fill is used once. Returns
-/// how many of `person`'s costed fills matched no claim: they are left
-/// out, never made fills of their own, so a dispense the two reads write
-/// differently never becomes two records under two ids.
-pub fn add_costs(fills: &mut [Fill], person: &Person, costed: &[CostedFill]) -> usize {
+/// each of `person`'s costed fills by [`costed_key`], with whether it
+/// matched a claim. One that matched none is left out, never made a fill of
+/// its own, so a dispense the two reads write differently never becomes two
+/// records under two ids. The caller counts the unmatched across windows
+/// by key, since adjacent windows share their boundary day.
+pub fn add_costs(fills: &mut [Fill], person: &Person, costed: &[CostedFill]) -> Vec<(String, bool)> {
     let mut used = vec![false; costed.len()];
     for fill in fills.iter_mut() {
         let Some(i) = costed
@@ -443,8 +445,21 @@ pub fn add_costs(fills: &mut [Fill], person: &Person, costed: &[CostedFill]) -> 
     costed
         .iter()
         .enumerate()
-        .filter(|(i, c)| !used[*i] && c.person == person.key)
-        .count()
+        .filter(|(_, c)| c.person == person.key)
+        .map(|(i, c)| (costed_key(c), used[i]))
+        .collect()
+}
+
+/// What identifies a costed fill across windows: the person, the day, the
+/// drug and the prescription number.
+pub fn costed_key(c: &CostedFill) -> String {
+    [
+        c.person.as_str(),
+        c.filled.as_deref().unwrap_or(""),
+        &c.drug.key(),
+        c.rx_number.as_deref().map(rx_key).unwrap_or(""),
+    ]
+    .join("|")
 }
 
 #[cfg(test)]
@@ -550,13 +565,15 @@ mod tests {
         assert_eq!(fills[0].amounts.patient_paid, Some(Cents(1000)));
         assert_eq!(fills[0].pharmacy.name.as_deref(), Some("Example Pharmacy"));
         assert_eq!(fills[1].amounts.patient_paid, Some(Cents(500)));
-        assert_eq!(left, 1);
+        let unmatched: Vec<&str> = left.iter().filter(|(_, m)| !m).map(|(k, _)| k.as_str()).collect();
+        assert_eq!(left.len(), 3, "another person's is not reported");
+        assert_eq!(unmatched, ["001|2026-08-01|00000000001|1"]);
         assert_eq!(fills.len(), 2);
         // A different number on the same day is a different fill.
         let mut other = vec![fill("0000003", "2026-10-01")];
         assert_eq!(
             add_costs(&mut other, &person, &[costed("001", Some("1"), "2026-10-01", 1)]),
-            1
+            [("001|2026-10-01|00000000001|1".to_string(), false)]
         );
         assert!(other[0].amounts.is_empty());
     }

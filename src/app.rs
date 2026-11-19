@@ -275,7 +275,7 @@ fn config(ctx: &Ctx, cmd: &ConfigCmd) -> Result<(), CliError> {
 /// process's. The arguments are checked before the profile, the vault or
 /// the site.
 fn site(ctx: &Ctx) -> Result<(), CliError> {
-    crate::site_cmd::check_args(ctx.cli)?;
+    crate::site_cmd::check_args(ctx.cli, &pk_cli_core::dates::fmt_iso(pk_cli_core::dates::today_local()))?;
     let profile = source::site_profile(ctx.cli, &ctx.profiles()?)?;
     let env = crate::site_cmd::Env::for_binary()?;
     let stdout = std::io::stdout();

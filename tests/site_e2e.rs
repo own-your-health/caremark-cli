@@ -529,6 +529,122 @@ fn an_export_to_a_folder_prints_its_summary() {
 }
 
 #[test]
+fn an_export_to_a_folder_cut_short_is_named_incomplete() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: Some(1),
+        status: 401,
+        content_type: JSON,
+        body: "{}".into(),
+    });
+    let dir = h.dir.join("cut");
+    let (code, out) = h
+        .run(&[
+            "records",
+            "export",
+            "--patient",
+            "Alex",
+            "-o",
+            dir.to_str().unwrap(),
+            "--json",
+        ])
+        .unwrap();
+    assert_eq!(code, 3);
+    let doc: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(doc["schema"], "records-export/v1");
+    assert_eq!(doc["complete"], false);
+    let file = dir.join("records.incomplete.ndjson");
+    assert_eq!(doc["path"], file.display().to_string());
+    assert!(file.exists());
+    assert!(!dir.join("records.ndjson").exists());
+}
+
+#[test]
+fn an_export_the_site_cut_short_keeps_its_cookies() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: Some(1),
+        status: 503,
+        content_type: JSON,
+        body: "{}".into(),
+    });
+    h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
+    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    assert_eq!(code, 5);
+    assert_eq!(lines.last().unwrap()["complete"], false);
+    // The site failed, not the session: the answers' cookies are kept.
+    assert!(h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
+}
+
+#[test]
+fn a_fill_on_a_shared_boundary_day_is_counted_once() {
+    let h = Household::new();
+    // One costed fill no claim has, on the day the two windows share.
+    let body = json!({ "data": { "getFinancialSummary": {
+        "statusCode": "0000",
+        "patients": [{
+            "patient": { "personCode": "001" },
+            "prescriptionforPatient": [{
+                "drugInfo": { "drug": { "name": "TESTOCILLIN", "ndcId": "00000000004" } },
+                "fills": [{ "dateTimeFilled": "2025-11-19T00:00:00", "patientPayAmount": 5 }],
+            }],
+        }],
+    }}})
+    .to_string();
+    h.server.fault(Fault {
+        experience: FINANCIAL,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body,
+    });
+    let (code, lines) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--since",
+        "2025-01-01",
+        "--ndjson",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(h.reads(FINANCIAL).len(), 2);
+    let skipped = lines.last().unwrap()["skipped"].as_array().unwrap().clone();
+    let unmatched: Vec<&Value> = skipped.iter().filter(|k| k["code"] == "unmatched").collect();
+    assert_eq!(unmatched.len(), 1, "{skipped:?}");
+    assert!(
+        unmatched[0]["reason"].as_str().unwrap().starts_with("1 fill "),
+        "{skipped:?}"
+    );
+}
+
+#[test]
+fn costs_limit_shortens_the_rows_not_the_totals() {
+    let h = Household::new();
+    let doc = h.json(&["costs", "--patient", "Alex", "--since", "2025-01-01", "--limit", "1"]);
+    assert_eq!(doc["items"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["totals"]["fills"], 3);
+    assert_eq!(doc["totals"]["total"]["amount"], "115.00");
+}
+
+#[test]
+fn the_since_limit_is_counted_from_the_runs_today() {
+    let h = Household::new();
+    // TODAY is 2026-11-19: 30 years back is 1996-11-19.
+    let e = h
+        .run(&["costs", "--patient", "Alex", "--since", "1996-11-18"])
+        .unwrap_err();
+    assert_eq!(e.exit_code(), 2);
+    assert!(e.message().contains("1996-11-19 or later"), "{}", e.message());
+    assert!(h.server.seen().is_empty());
+    let doc = h.json(&["costs", "--patient", "Alex", "--since", "1996-11-19"]);
+    assert_eq!(doc["schema"], "cost-list/v1");
+    assert_eq!(h.reads(CLAIMS).len(), 30);
+}
+
+#[test]
 fn a_session_refused_partway_keeps_the_years_read_before_it() {
     let h = Household::new();
     // The second year's claims: the first year's three fills are read.
