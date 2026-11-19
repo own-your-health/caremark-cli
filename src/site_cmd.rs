@@ -363,7 +363,9 @@ struct Pull {
 /// `who`'s fills from `since` to `until` (default today), a year at a
 /// time from `until` back.
 fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
-    let until = until.unwrap_or(&ctx.today).to_string();
+    // No fill is dated after today, so a later --until (a typo for a
+    // far-off year) adds no window.
+    let until = until.unwrap_or(&ctx.today).min(ctx.today.as_str()).to_string();
     let mut seen = HashSet::new();
     let mut fills = Vec::new();
     let mut unmatched = 0;
@@ -827,19 +829,26 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
             Some(f) => f.file(),
             None => out,
         };
-        let mut w = RecordsWriter::start(sink, &header(person, &since))?;
+        let head = header(person, &since);
+        // Every resource is the site's as read in this pull (DESIGN.md §1.4).
+        let at = head.pulled_at.clone();
+        let stamped = |mut v: Value| -> Result<RawResource, CliError> {
+            v["meta"]["lastUpdated"] = json!(at);
+            RawResource::from_value(&v)
+        };
+        let mut w = RecordsWriter::start(sink, &head)?;
         let written = (|| -> Result<(), CliError> {
             let coverage = fhir::coverage_id(person);
             for r in [fhir::organization(), fhir::patient(person), fhir::coverage(person)] {
-                w.resource(&RawResource::from_value(&r)?)?;
+                w.resource(&stamped(r)?)?;
             }
             for rx in &prescriptions(&fills) {
-                w.resource(&RawResource::from_value(&fhir::medication_request(rx))?)?;
+                w.resource(&stamped(fhir::medication_request(rx))?)?;
             }
             for f in &fills {
                 let rx = f.rx_number.as_ref().map(|n| prescription_id(&f.patient, n));
-                w.resource(&RawResource::from_value(&fhir::medication_dispense(f, rx.as_deref()))?)?;
-                w.resource(&RawResource::from_value(&fhir::explanation_of_benefit(f, &coverage))?)?;
+                w.resource(&stamped(fhir::medication_dispense(f, rx.as_deref()))?)?;
+                w.resource(&stamped(fhir::explanation_of_benefit(f, &coverage))?)?;
             }
             for skip in skips {
                 w.skip(skip);

@@ -4,8 +4,11 @@
 `records-stream/v1` with `method: "portal"`. The claims follow CARIN Blue
 Button's Pharmacy EOB and match uhc-cli's and kaiser-cli's, so medrec reads
 every insurer's claims the same way. Every resource carries
-`meta.source: "caremark:member-site"` and the tag
-`https://github.com/piekstra/caremark-cli/fhir/tag|mapped-from-member-site`.
+`meta.source: "caremark:member-site"`, the tag
+`https://github.com/piekstra/caremark-cli/fhir/tag|mapped-from-member-site`,
+and `meta.lastUpdated` set to the stream header's `pulled_at`: the site
+shows no date of its own for when a fill or a person was last changed, so
+each is dated as read in the pull (medical-common DESIGN.md §1.4).
 
 One export is one person's: the stream's `patient` is that person's
 `PatientContext`, as `patients list` prints it.

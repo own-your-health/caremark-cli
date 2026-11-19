@@ -466,6 +466,12 @@ fn an_export_is_one_persons_fills_as_fhir() {
         eob["patient"]["reference"],
         format!("Patient/{}", patient["id"].as_str().unwrap())
     );
+    // Every resource dated as read in this pull, a full instant.
+    let pulled_at = header["pulled_at"].as_str().unwrap();
+    assert!(pulled_at.len() == 20 && pulled_at.ends_with('Z'), "{pulled_at}");
+    for r in &lines[1..lines.len() - 1] {
+        assert_eq!(r["meta"]["lastUpdated"], pulled_at, "{}", r["resourceType"]);
+    }
     // Only Alex's claims were read.
     assert!(h.reads(CLAIMS).iter().all(|s| s.body["data"]["personCode"] == "001"));
 }
@@ -689,6 +695,24 @@ fn a_since_further_back_than_ten_years_is_read_to() {
     let claims = h.reads(CLAIMS);
     assert_eq!(claims.len(), 13);
     assert_eq!(claims.last().unwrap().body["data"]["claimStartDate"], "2014-01-01");
+}
+
+#[test]
+fn an_until_after_today_reads_no_year_after_it() {
+    let h = Household::new();
+    let doc = h.json(&[
+        "costs",
+        "--patient",
+        "Alex",
+        "--since",
+        "2026-01-01",
+        "--until",
+        "2206-01-01",
+    ]);
+    assert_eq!(doc["items"].as_array().unwrap().len(), 3);
+    let claims = h.reads(CLAIMS);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].body["data"]["claimEndDate"], TODAY);
 }
 
 #[test]
