@@ -5,7 +5,8 @@
 //! read. The binary's is the vault and www.caremark.com a second apart; the
 //! tests' is an in-memory vault and a loopback server. Every document goes
 //! to `out`; the session is written back once the command has done what it
-//! was asked, never after an error or an incomplete export.
+//! was asked, or after an export the site cut short (exit 5), and never
+//! after an error or an export a refused session ended (exit 3).
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -447,14 +448,29 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     }
 }
 
-/// A list command's fills: the whole pull, or its error.
-fn fills(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Result<Vec<Fill>, CliError> {
+/// What a list command's pull left out, as its JSON document says: the
+/// counts the export's trailer gives as skips.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct LeftOut {
+    /// Financial-summary fills no claim matched.
+    unmatched: usize,
+    /// Claims with no date caremark reads.
+    undated: usize,
+}
+
+/// A list command's fills and what was left out: the whole pull, or its
+/// error.
+fn fills(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Result<(Vec<Fill>, LeftOut), CliError> {
     let pull = pull(ctx, who, since, until);
-    if let Some(e) = pull.error {
-        return Err(e);
-    }
     note_left_out(ctx, &pull);
-    Ok(pull.fills)
+    let left_out = LeftOut {
+        unmatched: pull.unmatched,
+        undated: pull.undated,
+    };
+    match pull.error {
+        Some(e) => Err(e),
+        None => Ok((pull.fills, left_out)),
+    }
 }
 
 /// What a pull left out, on stderr.
@@ -626,7 +642,7 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
     let since = list_since(ctx, since, until.as_deref());
     let everyone = people(ctx)?;
     let who = who(&everyone, args.patient.as_deref())?;
-    let fills = fills(ctx, &who, &since, until.as_deref())?;
+    let (fills, left_out) = fills(ctx, &who, &since, until.as_deref())?;
     let mut rows: Vec<RxRow> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
     for f in fills.iter().filter(|f| !f.reversed) {
@@ -655,6 +671,7 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
             refills_authorized: same.iter().find_map(|g| g.refills_authorized),
         });
     }
+    let total = rows.len() as u64;
     if let Some(n) = args.range.limit {
         rows.truncate(n as usize);
     }
@@ -663,7 +680,11 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
         .map(|r| serde_json::to_value(r).unwrap_or_default())
         .collect();
     if ctx.json() {
-        return put(out, &serde_json::to_value(Paged::new("rx", items)).unwrap_or_default());
+        let mut page = Paged::new("rx", items);
+        page.total = Some(total);
+        let mut doc = serde_json::to_value(page).unwrap_or_default();
+        doc["left_out"] = serde_json::to_value(left_out).unwrap_or_default();
+        return put(out, &doc);
     }
     if items.is_empty() {
         ctx.note(&format!("no fills since {since}"));
@@ -726,7 +747,7 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
     let since = list_since(ctx, since, until.as_deref());
     let everyone = people(ctx)?;
     let who = who(&everyone, args.patient.as_deref())?;
-    let fills = fills(ctx, &who, &since, until.as_deref())?;
+    let (fills, left_out) = fills(ctx, &who, &since, until.as_deref())?;
     // The totals are the range's; --limit shortens only the rows.
     let counted: Vec<&Fill> = fills.iter().filter(|f| !f.reversed).collect();
     let sum = |pick: fn(&Fill) -> Option<Cents>| counted.iter().filter_map(|f| pick(f)).sum::<Cents>().money();
@@ -764,7 +785,10 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
             "since": since,
             "until": until,
             "items": rows,
+            // The rows the range holds: `items` is a --limit slice of them.
+            "total": fills.len(),
             "totals": totals,
+            "left_out": left_out,
         });
         return put(out, &doc);
     }

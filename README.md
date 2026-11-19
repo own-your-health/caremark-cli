@@ -71,8 +71,8 @@ Every command takes `--json` and prints one schema-tagged document.
 | Command | Output schema |
 | --- | --- |
 | `patients list` | `patient-list/v1` |
-| `rx list` | `rx-list/v1` |
-| `costs` | `cost-list/v1`: `items` and `totals` (fills not reversed) |
+| `rx list` | `rx-list/v1`, with `total` and `left_out` as `costs` |
+| `costs` | `cost-list/v1`: `items` (a `--limit` slice of `total` rows), `totals` over the range (fills not reversed), `left_out` (fills left out: `unmatched`, `undated`) |
 | `records export` | `records-stream/v1` (`--ndjson`), or `records-export/v1` (`-o`) |
 | `api` | the site's own JSON answer |
 | `auth login` / `status` / `logout` / `reset` | `auth-login/v1` / `auth-status/v1` / `auth-logout/v1` / `auth-reset/v1` |

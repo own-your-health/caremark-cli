@@ -31,6 +31,9 @@ One export is one person's: the stream's `patient` is that person's
 
 The ids carry no name, member id or prescription number, and they are the
 same on every pull, so a re-export replaces rather than duplicates. They
+are fixed from v0.1.0, which is released only after a signed-in read has
+confirmed the answer paths they are built from (the claim number above
+all). A later change to them is a breaking change, named in its release. They
 are keyed on the account signed in: a person seen from two sign-ins (a
 spouse with a login of their own on the cardholder's account) gets one id
 per sign-in, which medrec files as one source's two patients until its

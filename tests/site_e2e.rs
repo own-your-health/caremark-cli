@@ -366,6 +366,8 @@ fn rx_list_is_one_row_per_prescription_with_its_latest_fill() {
     let h = Household::new();
     let doc = h.json(&["rx", "list", "--patient", "alex", "--since", "2025-01-01"]);
     assert_eq!(doc["schema"], "rx-list/v1");
+    assert_eq!(doc["total"], 2);
+    assert_eq!(doc["left_out"]["undated"], 0);
     let items = doc["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "{items:?}");
     assert_eq!(items[0]["drug"], "EXAMPLEPRIL 10 MG TABLET");
@@ -398,6 +400,9 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     // differently.
     assert_eq!(items.len(), 4, "{items:?}");
     assert!(items.iter().all(|i| i["drug"] != "TESTOCILLIN 250 MG/5ML SUSPENSION"));
+    // The JSON says so too, not only stderr.
+    assert_eq!(doc["left_out"], json!({ "unmatched": 1, "undated": 0 }));
+    assert_eq!(doc["total"], 4);
     assert_eq!(items[0]["filled"], "2026-10-01");
     assert_eq!(items[0]["you_paid"]["amount"], "10.00");
     // The claim gave no amounts; the financial summary did.
@@ -762,6 +767,7 @@ fn costs_limit_shortens_the_rows_not_the_totals() {
     let h = Household::new();
     let doc = h.json(&["costs", "--patient", "Alex", "--since", "2025-01-01", "--limit", "1"]);
     assert_eq!(doc["items"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["total"], 4);
     assert_eq!(doc["totals"]["fills"], 3);
     assert_eq!(doc["totals"]["total"]["amount"], "115.00");
 }

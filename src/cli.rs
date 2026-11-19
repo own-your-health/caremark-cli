@@ -54,7 +54,8 @@ pub enum Command {
     Rx(RxCmd),
     /// Each fill and what it cost: the drug's total cost, what the plan
     /// paid, what you paid and what went to the deductible, with their sums
-    /// (cost-list/v1).
+    /// over the whole range (cost-list/v1). --limit shortens the rows, not
+    /// the sums.
     Costs(CostsArgs),
     /// One person's fills and pharmacy claims as records-stream/v1, for
     /// `medrec import --from caremark`.
