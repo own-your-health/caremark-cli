@@ -1,5 +1,6 @@
-//! Amounts as whole cents. The site answers an amount as a JSON number
-//! (`12.5`) or a string (`"12.50"`, `"$12.50"`); arithmetic stays in
+//! Amounts as whole cents. The site answers an amount in dollars, as a JSON
+//! number (`12.5`, and `5` is five dollars) or a string (`"12.50"`,
+//! `"$12.50"`), as its pages show it; arithmetic stays in
 //! integers, and output goes out as `pk_cli_core::Money`'s string decimal in
 //! the DTOs, and as a FHIR `Money.value` number in the stream.
 
@@ -66,7 +67,7 @@ impl Cents {
     /// The FHIR `Money.value`: a JSON number; the shortest representation
     /// of two decimals round-trips exactly.
     pub fn fhir_value(self) -> Value {
-        let n = serde_json::Number::from_f64(self.0 as f64 / 100.0).expect("finite");
+        let n = serde_json::Number::from_f64(self.0 as f64 / 100.0).expect("an i64 of cents over 100 is always finite");
         Value::Number(n)
     }
 }

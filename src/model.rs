@@ -178,9 +178,19 @@ fn hashed(prefix: &str, parts: &[&str], hex: usize) -> String {
 }
 
 /// A person's `Patient.id`: stable across pulls, and carrying no name or
-/// member id. `key` is what identifies the person to the site.
-pub fn patient_id(key: &str) -> String {
-    hashed("p", &["caremark", key], 12)
+/// member id. `account` is the signed-in member's own id at the site and
+/// `key` the person's code under it: a person code is numbered per account
+/// (the cardholder is the same code on every account), so it identifies no
+/// one across two accounts on its own.
+pub fn patient_id(account: &str, key: &str) -> String {
+    hashed("p", &["caremark", account, key], 12)
+}
+
+/// The id of the `n`th fill (from 2) that one read gives the same
+/// [`fill_id`] without a claim number: two real fills (a split fill on one
+/// day) stay two.
+pub fn nth_fill_id(id: &str, n: usize) -> String {
+    hashed("rx", &[id, &n.to_string()], 16)
 }
 
 /// A fill's id, under the patient's: the claim number when there is one,
@@ -234,12 +244,18 @@ mod tests {
 
     #[test]
     fn ids_are_stable_and_carry_nothing_of_the_person() {
-        let p = patient_id("SYNM000001");
+        let p = patient_id("SYNM000001", "001");
         assert_eq!(p.len(), 13);
         assert!(p.starts_with('p'));
-        assert_eq!(p, patient_id("SYNM000001"));
-        assert_ne!(p, patient_id("SYNM000002"));
+        assert_eq!(p, patient_id("SYNM000001", "001"));
+        assert_ne!(p, patient_id("SYNM000001", "002"));
+        // The same person code on another account is another person.
+        assert_ne!(p, patient_id("SYNM000009", "001"));
         assert!(!p.contains("SYNM"));
+        let one = fill_id(&p, None, Some("0000001"), None, Some("2026-01-01"), "x");
+        assert_ne!(nth_fill_id(&one, 2), one);
+        assert_ne!(nth_fill_id(&one, 2), nth_fill_id(&one, 3));
+        assert_eq!(nth_fill_id(&one, 2), nth_fill_id(&one, 2));
         let by_claim = fill_id(
             &p,
             Some("0000000001"),

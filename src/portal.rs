@@ -3,6 +3,7 @@
 //! the site's shapes is fixed in one place. A field the answer leaves out
 //! is `None`, never a default.
 
+use pk_cli_core::CliError;
 use serde_json::Value;
 
 use crate::cents::Cents;
@@ -61,8 +62,15 @@ pub fn date(raw: &str) -> Option<String> {
     let s = raw.trim();
     let ok = |y: &str, m: &str, d: &str| {
         let (y, m, d) = (y.parse::<u32>().ok()?, m.parse::<u32>().ok()?, d.parse::<u32>().ok()?);
-        ((1900..=2200).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d))
-            .then(|| format!("{y:04}-{m:02}-{d:02}"))
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let days = match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if leap => 29,
+            2 => 28,
+            _ => return None,
+        };
+        ((1900..=2200).contains(&y) && (1..=days).contains(&d)).then(|| format!("{y:04}-{m:02}-{d:02}"))
     };
     let digits = |p: &str, n: usize| p.len() == n && p.bytes().all(|b| b.is_ascii_digit());
     let b = s.as_bytes();
@@ -129,7 +137,17 @@ fn printable(text: &str) -> String {
 /// Answer: `data.getFamilyInfo.familyMemberList[]` (`firstName`,
 /// `lastName`, `dateOfBirth`, `personCode`, `relationship`), and
 /// `data.getPatientV2` for the signed-in member.
-pub fn people(answer: &Value) -> Vec<Person> {
+pub fn people(answer: &Value) -> Result<Vec<Person>, CliError> {
+    // The ids are keyed on the signed-in member's own id: person codes
+    // repeat across accounts.
+    let account = text(
+        answer,
+        &[
+            "data.getPatientV2.id",
+            "data.getPatientV2.externalId",
+            "data.getPatientV2.lookupId",
+        ],
+    );
     let mut out: Vec<Person> = Vec::new();
     let mut add = |v: &Value, signed_in: bool| {
         let Some(key) = text(v, &["personCode"]) else {
@@ -143,7 +161,7 @@ pub fn people(answer: &Value) -> Vec<Person> {
             }
         });
         let read = Person {
-            id: patient_id(&key),
+            id: patient_id(account.as_deref().unwrap_or(""), &key),
             key,
             first_name: text(v, &["firstName"]),
             last_name: text(v, &["lastName"]),
@@ -171,7 +189,13 @@ pub fn people(answer: &Value) -> Vec<Person> {
     for v in array(answer, &["data.getFamilyInfo.familyMemberList"]) {
         add(v, false);
     }
-    out
+    if account.is_none() && !out.is_empty() {
+        return Err(CliError::Upstream(
+            "the member site gave no id for the signed-in member (data.getPatientV2.id), which caremark's ids are keyed on; the site's answer may have changed (docs/api.md)"
+                .into(),
+        ));
+    }
+    Ok(out)
 }
 
 // ----------------------------------------------------------------- fills
@@ -472,6 +496,7 @@ mod tests {
         assert_eq!(date("2026-01-15").as_deref(), Some("2026-01-15"));
         assert_eq!(date("2026-01-15T10:00:00.000Z").as_deref(), Some("2026-01-15"));
         assert_eq!(date("1/5/2026").as_deref(), Some("2026-01-05"));
+        assert_eq!(date("2028-02-29").as_deref(), Some("2028-02-29"));
         // Eight digits, built so no eight-digit run sits in the source.
         assert_eq!(date(&["2026", "0115"].concat()).as_deref(), Some("2026-01-15"));
         for bad in [
@@ -484,6 +509,11 @@ mod tests {
             "2026-01-1é",
             "2026-01-é1",
             "é/1/2026",
+            // Days the month does not have.
+            "2026-02-30",
+            "2026-04-31",
+            "2/29/2026",
+            "2026-02-29",
         ] {
             assert_eq!(date(bad), None, "{bad}");
         }

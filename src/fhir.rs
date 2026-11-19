@@ -418,7 +418,7 @@ mod tests {
 
     fn person() -> Person {
         Person {
-            id: patient_id("01"),
+            id: patient_id("SYN0000001", "01"),
             key: "01".into(),
             first_name: Some("Alex".into()),
             last_name: Some("Example".into()),
@@ -430,7 +430,7 @@ mod tests {
     }
 
     fn fill() -> Fill {
-        let patient = patient_id("01");
+        let patient = patient_id("SYN0000001", "01");
         Fill {
             id: fill_id(&patient, Some("0000000001"), None, None, None, ""),
             patient,

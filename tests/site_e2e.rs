@@ -528,6 +528,143 @@ fn an_export_to_a_folder_prints_its_summary() {
     }
 }
 
+/// The family answer as another account would give it: the same people
+/// and person codes, another signed-in member's id (or none).
+fn family_of_another_account(id: Option<&str>) -> String {
+    let mut v: Value =
+        serde_json::from_str(&std::fs::read_to_string("tests/fixtures/site/member-family.json").unwrap()).unwrap();
+    match id {
+        Some(id) => v["data"]["getPatientV2"]["id"] = json!(id),
+        None => {
+            v["data"]["getPatientV2"].as_object_mut().unwrap().remove("id");
+        }
+    }
+    v.to_string()
+}
+
+fn ids(lines: &[Value]) -> Vec<String> {
+    lines[1..lines.len() - 1]
+        .iter()
+        .filter(|r| r["resourceType"] != "Organization")
+        .map(|r| format!("{}/{}", r["resourceType"].as_str().unwrap(), r["id"].as_str().unwrap()))
+        .collect()
+}
+
+#[test]
+fn the_same_person_code_on_another_account_is_another_person() {
+    let one = Household::new();
+    let (_, mine) = one.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let other = Household::new();
+    other.server.fault(Fault {
+        experience: FAMILY,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: family_of_another_account(Some("SYN0000009")),
+    });
+    let (code, theirs) = other.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    assert_eq!(code, 0);
+    assert_ne!(mine[0]["patient"]["id"], theirs[0]["patient"]["id"]);
+    // Patient, Coverage, the prescriptions and the fills: no id in common.
+    let (a, b) = (ids(&mine), ids(&theirs));
+    assert_eq!(a.len(), b.len());
+    assert!(a.iter().all(|id| !b.contains(id)), "{a:?} {b:?}");
+}
+
+#[test]
+fn a_family_without_the_members_own_id_is_the_sites_failure() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: FAMILY,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: family_of_another_account(None),
+    });
+    let e = h.run(&["patients", "list"]).unwrap_err();
+    assert_eq!(e.exit_code(), 5);
+    assert!(e.message().contains("getPatientV2.id"), "{}", e.message());
+}
+
+#[test]
+fn two_same_day_fills_with_no_claim_number_are_two() {
+    let h = Household::new();
+    let claim = json!({
+        "rxNumber": "0000009",
+        "claimStatus": "PAID",
+        "fillDate": "2026-10-05",
+        "drug": { "name": "EXAMPLEPRIL", "ndcId": "00000-0000-01" },
+    });
+    let body = json!({ "data": { "getClaimV2": {
+        "statusCode": "0000",
+        "memberClaimList": [{ "personCode": "001", "claims": [claim.clone(), claim] }],
+    }}})
+    .to_string();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body,
+    });
+    let (code, lines) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--since",
+        "2025-01-01",
+        "--ndjson",
+    ]);
+    assert_eq!(code, 0);
+    // Both windows answer both claims: two fills, each once.
+    let dispenses = of_type(&lines, "MedicationDispense");
+    assert_eq!(dispenses.len(), 2);
+    assert_ne!(dispenses[0]["id"], dispenses[1]["id"]);
+}
+
+#[test]
+fn a_prescription_is_the_same_from_a_narrow_pull_and_a_full_one() {
+    let h = Household::new();
+    let (_, full) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (_, narrow) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--since",
+        "2026-09-15",
+        "--ndjson",
+    ]);
+    let request = |lines: &[Value]| {
+        of_type(lines, "MedicationRequest")
+            .into_iter()
+            .find(|r| r["identifier"][0]["value"] == "0000001")
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(request(&full), request(&narrow));
+}
+
+#[test]
+fn an_export_to_a_folder_that_cannot_be_written_reads_nothing() {
+    let h = Household::new();
+    let blocker = h.dir.join("a-file");
+    std::fs::write(&blocker, "").unwrap();
+    let e = h
+        .run(&[
+            "records",
+            "export",
+            "--patient",
+            "Alex",
+            "-o",
+            blocker.join("out").to_str().unwrap(),
+        ])
+        .unwrap_err();
+    assert_ne!(e.exit_code(), 0);
+    assert!(h.server.seen().is_empty());
+}
+
 #[test]
 fn an_export_to_a_folder_cut_short_is_named_incomplete() {
     let h = Household::new();

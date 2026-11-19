@@ -24,13 +24,23 @@ One export is one person's: the stream's `patient` is that person's
 | Resource | `id` | From |
 | --- | --- | --- |
 | `Organization` | `caremark` | constant |
-| `Patient` | `p` and 12 hex digits | SHA-256 of the person's person code (`model::patient_id`) |
+| `Patient` | `p` and 12 hex digits | SHA-256 of the signed-in member's own id at the site (`getPatientV2.id`) and the person's person code (`model::patient_id`): person codes are numbered per account, so the code alone would give two accounts' cardholders one id |
 | `Coverage` | `cov-<patient id>` | |
 | `MedicationRequest` | `mr` and 16 hex digits | the patient id and the prescription number |
-| `MedicationDispense`, `ExplanationOfBenefit` | `rx` and 16 hex digits, the same for a fill's two | the claim number; else the prescription number, fill number and date; else the date and the drug (`model::fill_id`) |
+| `MedicationDispense`, `ExplanationOfBenefit` | `rx` and 16 hex digits, the same for a fill's two | the claim number; else the prescription number, fill number and date; else the date and the drug (`model::fill_id`). A second claim of one read with the same id and no claim number (a split fill) gets its own (`model::nth_fill_id`) |
 
 The ids carry no name, member id or prescription number, and they are the
-same on every pull, so a re-export replaces rather than duplicates.
+same on every pull, so a re-export replaces rather than duplicates. They
+are keyed on the account signed in: a person seen from two sign-ins (a
+spouse with a login of their own on the cardholder's account) gets one id
+per sign-in, which medrec files as one source's two patients until its
+people are joined. A family answer without the member's own id is exit 5
+rather than ids that could collide.
+
+A MedicationRequest is built from its prescription's latest fill alone:
+the drug, the prescriber and the refills authorized. Nothing in it depends
+on which older fills a pull's range reached, so a narrow pull and a full
+one write the same request under the same date.
 
 ## Resources
 

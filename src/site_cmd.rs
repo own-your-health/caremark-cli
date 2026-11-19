@@ -27,7 +27,7 @@ use crate::cents::Cents;
 use crate::cli::*;
 use crate::client::{self, experience, Client};
 use crate::fhir;
-use crate::model::{prescription_id, Fill, Person, Prescription};
+use crate::model::{nth_fill_id, prescription_id, Fill, Person, Prescription};
 use crate::portal::{self, CostedFill};
 use crate::session::{Session, SessionStore};
 use crate::site::SiteKeys;
@@ -251,7 +251,7 @@ fn people(ctx: &Ctx) -> Result<Vec<Person>, CliError> {
     let answer = ctx
         .client
         .experience(experience("member-family"), &json!({ "data": {} }))?;
-    let people = portal::people(&answer);
+    let people = portal::people(&answer)?;
     if people.is_empty() {
         return Err(CliError::NotFound(
             "the member site lists no one on this account (member-family); the site may have changed (docs/api.md)"
@@ -408,7 +408,18 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
                     unmatched.insert(key);
                 }
             }
-            for f in found {
+            // Within one read, two claims with no claim number and the same
+            // id are two fills; across reads, the same id is the boundary
+            // day's copy.
+            let mut here: BTreeMap<String, usize> = BTreeMap::new();
+            for mut f in found {
+                if f.claim_number.is_none() {
+                    let n = here.entry(f.id.clone()).or_insert(0);
+                    *n += 1;
+                    if *n > 1 {
+                        f.id = nth_fill_id(&f.id, *n);
+                    }
+                }
                 if seen.insert(f.id.clone()) {
                     fills.push(f);
                 }
@@ -496,7 +507,10 @@ fn oldest(ctx: &Ctx) -> String {
 }
 
 /// The prescriptions `fills` (newest first) are of: one per prescription
-/// number, its drug and prescriber the latest fill's.
+/// number, built from its latest fill alone (the drug, the prescriber, the
+/// refills authorized), never from which older fills the pull's range
+/// reached. A narrow pull and a full one then write the same content under
+/// the same date (medical-common DESIGN.md §1.4).
 fn prescriptions(fills: &[Fill]) -> Vec<Prescription> {
     let mut out: Vec<Prescription> = Vec::new();
     for f in fills {
@@ -511,17 +525,8 @@ fn prescriptions(fills: &[Fill]) -> Vec<Prescription> {
             patient: f.patient.clone(),
             rx_number: rx.clone(),
             drug: f.drug.clone(),
-            prescriber: fills
-                .iter()
-                .filter(|g| g.patient == f.patient && g.rx_number.as_ref() == Some(rx))
-                .map(|g| &g.prescriber)
-                .find(|p| !p.is_empty())
-                .cloned()
-                .unwrap_or_default(),
-            refills_authorized: fills
-                .iter()
-                .filter(|g| g.patient == f.patient && g.rx_number.as_ref() == Some(rx))
-                .find_map(|g| g.refills_authorized),
+            prescriber: f.prescriber.clone(),
+            refills_authorized: f.refills_authorized,
             refills_remaining: None,
             status: None,
             last_filled: f.filled.clone(),
@@ -831,16 +836,19 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
         Some(s) => iso(s)?,
         None => oldest(ctx),
     };
+    // The folder first: one that cannot be written to is refused before
+    // the site is read. An export that fails before its stream starts
+    // leaves no file.
+    let mut file = match &args.output {
+        Some(dir) => Some(create_export_file(dir)?),
+        None => None,
+    };
     let everyone = people(ctx)?;
     let person = pick(&everyone, args.patient.as_deref())?;
     let pulled = pull(ctx, &[person], &since, None);
     note_left_out(ctx, &pulled);
     let skips = left_out_skips(&pulled);
     let Pull { fills, error, .. } = pulled;
-    let mut file = match &args.output {
-        Some(dir) => Some(create_export_file(dir)?),
-        None => None,
-    };
     let finished = {
         let sink: &mut dyn Write = match file.as_mut() {
             Some(f) => f.file(),
