@@ -751,6 +751,57 @@ fn an_export_the_site_cut_short_keeps_its_cookies() {
 }
 
 #[test]
+fn a_list_the_site_cut_short_keeps_its_cookies() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: Some(1),
+        status: 503,
+        content_type: JSON,
+        body: "{}".into(),
+    });
+    h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
+    let e = h
+        .run(&["costs", "--patient", "Alex", "--since", "2024-01-01"])
+        .unwrap_err();
+    assert_eq!(e.exit_code(), 5);
+    assert!(h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
+}
+
+#[test]
+fn a_list_the_site_refused_keeps_no_cookie() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: Some(1),
+        status: 401,
+        content_type: JSON,
+        body: "{}".into(),
+    });
+    h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
+    let e = h
+        .run(&["rx", "list", "--patient", "Alex", "--since", "2024-01-01"])
+        .unwrap_err();
+    assert_eq!(e.exit_code(), 3);
+    assert!(!h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
+}
+
+#[test]
+fn a_family_with_only_another_id_field_is_the_sites_failure() {
+    let h = Household::new();
+    let mut v: Value = serde_json::from_str(&family_of_another_account(None)).unwrap();
+    v["data"]["getPatientV2"]["externalId"] = json!("SYN0000009");
+    h.server.fault(Fault {
+        experience: FAMILY,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: v.to_string(),
+    });
+    assert_eq!(h.run(&["patients", "list"]).unwrap_err().exit_code(), 5);
+}
+
+#[test]
 fn a_fill_on_a_shared_boundary_day_is_counted_once() {
     let h = Household::new();
     // One costed fill no claim has, on the day the two windows share.

@@ -5,8 +5,8 @@
 //! read. The binary's is the vault and www.caremark.com a second apart; the
 //! tests' is an in-memory vault and a loopback server. Every document goes
 //! to `out`; the session is written back once the command has done what it
-//! was asked, or after an export the site cut short (exit 5), and never
-//! after an error or an export a refused session ended (exit 3).
+//! was asked, or after the site cut any command short (exit 5), and never
+//! after a refused session (exit 3) or another error.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -171,7 +171,7 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
         client = client.with_keys(keys.clone());
     }
     let ctx = Ctx { cli, client, today };
-    let code = match &cli.command {
+    let result = match &cli.command {
         Command::Patients(PatientsCmd::List) => patients(&ctx, out).map(|()| 0),
         Command::Rx(RxCmd::List(args)) => rx_list(&ctx, args, out).map(|()| 0),
         Command::Costs(args) => costs(&ctx, args, out).map(|()| 0),
@@ -181,14 +181,19 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
             ctx.client.api(&request).and_then(|doc| put(out, &doc)).map(|()| 0)
         }
         _ => Err(CliError::Other("not a member-site command".into())),
-    }?;
-    // After the command did what it was asked, or after an export the
-    // site cut short (exit 5): its earlier answers' cookies are the
-    // session's. Not after a refused session (exit 3).
-    if code == 0 || code == 5 {
+    };
+    // After the command did what it was asked, or after the site cut any
+    // command short (exit 5: an error, or an export's incomplete stream):
+    // the answers' cookies are the session's. Not after a refused session
+    // (exit 3) or a request never sent.
+    let keep = match &result {
+        Ok(code) => *code == 0 || *code == 5,
+        Err(e) => e.exit_code() == 5,
+    };
+    if keep {
         write_back(&ctx.client, &env.sessions, profile, &read_header);
     }
-    Ok(code)
+    result
 }
 
 /// [`run`] for a command line, resolving its profile as the binary does:

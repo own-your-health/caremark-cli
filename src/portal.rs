@@ -139,15 +139,9 @@ fn printable(text: &str) -> String {
 /// `data.getPatientV2` for the signed-in member.
 pub fn people(answer: &Value) -> Result<Vec<Person>, CliError> {
     // The ids are keyed on the signed-in member's own id: person codes
-    // repeat across accounts.
-    let account = text(
-        answer,
-        &[
-            "data.getPatientV2.id",
-            "data.getPatientV2.externalId",
-            "data.getPatientV2.lookupId",
-        ],
-    );
+    // repeat across accounts. One field only: a fallback to another would
+    // move every id, with no error, the day the site answered without it.
+    let account = text(answer, &["data.getPatientV2.id"]);
     let mut out: Vec<Person> = Vec::new();
     let mut add = |v: &Value, signed_in: bool| {
         let Some(key) = text(v, &["personCode"]) else {

@@ -140,7 +140,7 @@ financial summary are read as the site's pages read them:
 
 | Read | Paths |
 | --- | --- |
-| `member-family` | `data.getPatientV2` (the signed-in member; its `id`, else `externalId` or `lookupId`, keys every id caremark writes, hashed and never written out) and `data.getFamilyInfo.familyMemberList[]`: `personCode`, `firstName`, `lastName`, `dateOfBirth`, `relationship` (`CARDHOLDER`, `SPOUSE`, `CHILD`) |
+| `member-family` | `data.getPatientV2` (the signed-in member; its `id` alone keys every id caremark writes, hashed and never written out, and an answer without it is exit 5) and `data.getFamilyInfo.familyMemberList[]`: `personCode`, `firstName`, `lastName`, `dateOfBirth`, `relationship` (`CARDHOLDER`, `SPOUSE`, `CHILD`) |
 | `claim-history`, per person code and year | `data.getClaimV2.statusCode`; `memberClaimList[].claims[]`: `rxNumber`, `fillNumber`, `rxclaimNumber`, `claimStatus`, `fillDate`, `daysSupplyQuantity`, `dispensedQuantity`, `drug` (`name`, `formStrengthName`, `formName`, `ndcId`, `genericProductId`), `pharmacy` (`pharmacyName`, `pharmacyNPI`), `prescriber` (`prescriberFirstName`, `prescriberLastName`, `prescriberNPI`), the amounts |
 | `financial-summary`, per year | `data.getFinancialSummary.statusCode`; `patients[]`: `patient.personCode`, `linkedIDs[].prescriptionforPatient[]` with `drugInfo.drug` and `fills[]` (`dateTimeFilled`, `pharmacyName`, the amounts) |
 
