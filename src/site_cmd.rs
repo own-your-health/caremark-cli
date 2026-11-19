@@ -786,14 +786,9 @@ pub fn header(person: &Person, since: &str) -> Header {
     );
     h.method = Some(method::PORTAL.into());
     h.since = Some(since.into());
-    // Exported whatever the date: the payer, the person, the plan and the
-    // prescriptions the fills are of.
-    h.since_unbounded = vec![
-        "Coverage".into(),
-        "MedicationRequest".into(),
-        "Organization".into(),
-        "Patient".into(),
-    ];
+    // Exported whatever the date: the payer, the person and the plan. A
+    // prescription is exported only when it has a fill in range.
+    h.since_unbounded = vec!["Coverage".into(), "Organization".into(), "Patient".into()];
     h
 }
 
@@ -843,7 +838,14 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
                 w.resource(&stamped(r)?)?;
             }
             for rx in &prescriptions(&fills) {
-                w.resource(&stamped(fhir::medication_request(rx))?)?;
+                // Dated by its latest fill, the newest content it holds: a
+                // narrower pull of the same fills (a later --since) then
+                // never outranks a fuller one already filed.
+                let mut v = fhir::medication_request(rx);
+                if let Some(day) = &rx.last_filled {
+                    v["meta"]["lastUpdated"] = json!(format!("{day}T00:00:00Z"));
+                }
+                w.resource(&RawResource::from_value(&v)?)?;
             }
             for f in &fills {
                 let rx = f.rx_number.as_ref().map(|n| prescription_id(&f.patient, n));

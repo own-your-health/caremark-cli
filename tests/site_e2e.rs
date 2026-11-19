@@ -470,8 +470,19 @@ fn an_export_is_one_persons_fills_as_fhir() {
     let pulled_at = header["pulled_at"].as_str().unwrap();
     assert!(pulled_at.len() == 20 && pulled_at.ends_with('Z'), "{pulled_at}");
     for r in &lines[1..lines.len() - 1] {
-        assert_eq!(r["meta"]["lastUpdated"], pulled_at, "{}", r["resourceType"]);
+        if r["resourceType"] != "MedicationRequest" {
+            assert_eq!(r["meta"]["lastUpdated"], pulled_at, "{}", r["resourceType"]);
+        }
     }
+    // A prescription is dated by its latest fill, so a narrower pull of the
+    // same fills never outranks a fuller one.
+    let requests = of_type(&lines, "MedicationRequest");
+    let mut dated: Vec<&str> = requests
+        .iter()
+        .map(|r| r["meta"]["lastUpdated"].as_str().unwrap())
+        .collect();
+    dated.sort();
+    assert_eq!(dated, ["2026-08-15T00:00:00Z", "2026-10-01T00:00:00Z"]);
     // Only Alex's claims were read.
     assert!(h.reads(CLAIMS).iter().all(|s| s.body["data"]["personCode"] == "001"));
 }
@@ -492,7 +503,7 @@ fn an_export_since_a_day_bounds_the_fills_only() {
     assert_eq!(lines[0]["since"], "2026-09-01");
     assert_eq!(
         lines[0]["since_unbounded"],
-        json!(["Coverage", "MedicationRequest", "Organization", "Patient"])
+        json!(["Coverage", "Organization", "Patient"])
     );
     assert_eq!(of_type(&lines, "MedicationDispense").len(), 2);
     assert_eq!(h.reads(CLAIMS).len(), 1);

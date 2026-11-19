@@ -6,9 +6,15 @@ Button's Pharmacy EOB and match uhc-cli's and kaiser-cli's, so medrec reads
 every insurer's claims the same way. Every resource carries
 `meta.source: "caremark:member-site"`, the tag
 `https://github.com/piekstra/caremark-cli/fhir/tag|mapped-from-member-site`,
-and `meta.lastUpdated` set to the stream header's `pulled_at`: the site
-shows no date of its own for when a fill or a person was last changed, so
-each is dated as read in the pull (medical-common DESIGN.md §1.4).
+and `meta.lastUpdated` (medical-common DESIGN.md §1.4). That is the
+stream header's `pulled_at`, since the site shows no date of its own for
+when a fill or a person last changed. The exception is a MedicationRequest,
+dated by its latest fill (`YYYY-MM-DDT00:00:00Z`). It is built from the
+fills in the pull's range, so a narrower pull (a later `--since`) carries
+the same date and never outranks a fuller copy already filed; a new fill
+makes it newer. Every fill in a stream brings its MedicationRequest,
+whatever `--since` bounds, so the header's `since_unbounded` names only
+Coverage, Organization and Patient.
 
 One export is one person's: the stream's `patient` is that person's
 `PatientContext`, as `patients list` prints it.
