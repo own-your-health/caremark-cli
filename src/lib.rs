@@ -3,9 +3,14 @@
 
 pub mod app;
 pub mod auth;
+pub mod cents;
 pub mod cli;
 pub mod client;
+pub mod fhir;
+pub mod model;
+pub mod portal;
 pub mod session;
 pub mod shape;
 pub mod site;
+pub mod site_cmd;
 pub mod source;

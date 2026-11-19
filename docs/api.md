@@ -133,6 +133,23 @@ The family-info answer the pages keep has
 `getPlanDetailsList.planDetailsList[]`; `personCode` is what
 `claim-history` takes.
 
+### What caremark reads in the answers
+
+`src/portal.rs` names every path. The family, the claims and the
+financial summary are read as the site's pages read them:
+
+| Read | Paths |
+| --- | --- |
+| `member-family` | `data.getPatientV2` (the signed-in member) and `data.getFamilyInfo.familyMemberList[]`: `personCode`, `firstName`, `lastName`, `dateOfBirth`, `relationship` (`CARDHOLDER`, `SPOUSE`, `CHILD`) |
+| `claim-history`, per person code and year | `data.getClaimV2.statusCode`; `memberClaimList[].claims[]`: `rxNumber`, `fillNumber`, `rxclaimNumber`, `claimStatus`, `fillDate`, `daysSupplyQuantity`, `dispensedQuantity`, `drug` (`name`, `formStrengthName`, `formName`, `ndcId`, `genericProductId`), `pharmacy` (`pharmacyName`, `pharmacyNPI`), `prescriber` (`prescriberFirstName`, `prescriberLastName`, `prescriberNPI`), the amounts |
+| `financial-summary`, per year | `data.getFinancialSummary.statusCode`; `patients[]`: `patient.personCode`, `linkedIDs[].prescriptionforPatient[]` with `drugInfo.drug` and `fills[]` (`dateTimeFilled`, `pharmacyName`, the amounts) |
+
+The claim fields come from the claim-history and drug-cost pages' own
+code. Each read is a year (`claimStartDate`/`claimEndDate`,
+`startDate`/`endDate`), as the claims page asks for one. A claim's fill is
+matched to the financial summary's by the day and the drug, for the
+amounts a claim leaves out.
+
 The same scripts hold experiences that write (refills, orders, carts,
 transfers, notification marks, reimbursement claims, prior-authorization
 requests, preferences). caremark lists none of them, and `caremark api`

@@ -21,9 +21,15 @@ cli-common tag medical-common pins.
 | `src/session.rs` | `SessionStore`: get, put and delete a profile's session in the vault; the only code that knows where it lives |
 | `src/source.rs` | which configured profile a command signs in as (`resolve_profile`) |
 | `src/site.rs` | the member site's sign-in: the browser capture, the site's public keys (`SiteKeys`, from env.js), the session check (`SESSION_CHECK_URL`, `judge`) |
+| `src/site_cmd.rs` | the commands that read the site (`patients`, `rx`, `costs`, `records export`, `api`) against an `Env` (the vault and the site, or a test's): the year windows, the fills, the stream |
+| `src/portal.rs` | every path caremark reads in an answer, into `model` |
+| `src/model.rs` | a person, a fill, a prescription, apart from the site's shapes; the stable ids |
+| `src/fhir.rs` | the FHIR written by hand from `model` (`docs/fhir.md`) |
+| `src/cents.rs` | amounts as whole cents |
 | `src/client.rs` | the member-site reads: the experiences (`EXPERIENCES`), pacing, the cookie jar, `refuse` (answers to exit codes), and `api_request`, which checks an `api` request is a read before it is sent |
 | `src/shape.rs` | an answer's shape without its values, for mapping (`examples/shape.rs`) |
 | `docs/api.md` | how Caremark data can be reached, with the sources' own wording, the endpoints and the traps |
+| `docs/fhir.md` | every FHIR field caremark writes and where it comes from |
 
 ## Medical data rules
 
@@ -104,6 +110,10 @@ Unit and in-process tests use `Vault::new(MemoryKeys::new(), dir)`.
 - `tests/cli_surface.rs`: every `--help`, exit codes, JSON errors, argument
   checks before the site is read, profile selection, `NO_COLOR`, a per-test
   `XDG_CONFIG_HOME`.
+- `tests/site_e2e.rs`: every site command in-process against a loopback
+  server answering with `tests/fixtures/site/`, the session in an in-memory
+  vault: the windows, the stream, the refusals as exit codes, the cookie
+  write-back.
 - `tests/no_personal_data.rs`.
 - Unit tests beside the code: the capture, the session check against a
   loopback server, `api_request`, `refuse`, the cookie jar.

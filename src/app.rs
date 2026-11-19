@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cli::*;
-use crate::client::{self, Client};
-use crate::session::SessionStore;
 use crate::source;
 
 const REPO: &str = "piekstra/caremark-cli";
@@ -95,7 +93,7 @@ pub fn run(cli: &Cli, profile_flag: bool) -> Result<(), CliError> {
             source::no_profile(profile_flag, "profiles")?;
             profiles_cmd(&ctx, cmd)
         }
-        Command::Api(args) => api(&ctx, args),
+        Command::Patients(_) | Command::Rx(_) | Command::Costs(_) | Command::Records(_) | Command::Api(_) => site(&ctx),
         Command::SelfUpdate(args) => {
             source::no_profile(profile_flag, "self-update")?;
             Updater {
@@ -134,6 +132,10 @@ pub fn info() -> serde_json::Value {
         },
         &[
             "profiles",
+            "patients",
+            "rx",
+            "costs",
+            "records",
             "api",
             // The login commands take --profile.
             pk_med_records::LOGIN_PROFILES,
@@ -267,47 +269,19 @@ fn config(ctx: &Ctx, cmd: &ConfigCmd) -> Result<(), CliError> {
     }
 }
 
-// ------------------------------------------------------------------- api
+// ------------------------------------------------------------ the site
 
-/// A signed-in member-site client for `profile`, and the store to write
-/// its updated session back to.
-pub(crate) fn site_client(profile: &ProfileName) -> Result<(Client, SessionStore), CliError> {
-    let store = SessionStore::open()?;
-    let session = store.load(profile)?;
-    let client = Client::new(&session, profile, client::BASE, client::PACE)?;
-    Ok((client, store))
-}
-
-/// After a command's reads: the cookies the answers set, written back to
-/// the profile's session, unless a newer sign-in replaced it meanwhile. A
-/// failure is a warning; the output is complete and the stored session
-/// still works.
-pub(crate) fn write_back(client: &Client, store: &SessionStore, profile: &ProfileName, read_header: &str) {
-    let Some(updated) = client.updated_cookie_header() else {
-        return;
-    };
-    let result = store.get(profile).and_then(|current| match current {
-        Some(current) if current.cookie_header.expose() == read_header => {
-            store.put(profile, &current.with_cookie_header(updated))
-        }
-        _ => Ok(()),
-    });
-    if let Err(e) = result {
-        eprintln!(
-            "warning: the session's updated cookies were not stored: {}",
-            e.message()
-        );
-    }
-}
-
-fn api(ctx: &Ctx, args: &ApiArgs) -> Result<(), CliError> {
-    // The request is checked before the profile, the vault or the site.
-    let request = client::api_request(args.method, &args.path, args.data.as_deref())?;
+/// A member-site command, run as the binary: its exit code is the
+/// process's. The arguments are checked before the profile, the vault or
+/// the site.
+fn site(ctx: &Ctx) -> Result<(), CliError> {
+    crate::site_cmd::check_args(ctx.cli)?;
     let profile = source::site_profile(ctx.cli, &ctx.profiles()?)?;
-    let (client, store) = site_client(&profile)?;
-    let read_header = store.load(&profile)?.cookie_header.expose().to_string();
-    let answer = client.api(&request)?;
-    write_back(&client, &store, &profile, &read_header);
-    output::json(&answer);
+    let env = crate::site_cmd::Env::for_binary()?;
+    let stdout = std::io::stdout();
+    let code = crate::site_cmd::run(ctx.cli, &env, &profile, &mut stdout.lock())?;
+    if code != 0 {
+        std::process::exit(code);
+    }
     Ok(())
 }

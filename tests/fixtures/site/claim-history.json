@@ -1,0 +1,66 @@
+{
+  "data": {
+    "getClaimV2": {
+      "statusCode": "0000",
+      "memberClaimList": [
+        {
+          "personCode": "001",
+          "claims": [
+            {
+              "rxNumber": "0000001",
+              "fillNumber": 2,
+              "rxclaimNumber": "1111111111",
+              "claimStatus": "PAID",
+              "fillDate": "2026-10-01",
+              "daysSupplyQuantity": 30,
+              "dispensedQuantity": "30",
+              "drug": { "name": "EXAMPLEPRIL", "formStrengthName": "10 MG", "formName": "TABLET", "ndcId": "00000-0000-01", "brandGenericIndicator": "G" },
+              "pharmacy": { "pharmacyName": "Example Pharmacy", "pharmacyNPI": "0000000001" },
+              "prescriber": { "prescriberFirstName": "Sam", "prescriberLastName": "Example", "prescriberNPI": "0000000002" },
+              "patientPayAmount": 10,
+              "planPaidAmount": 2.5,
+              "totalRxCost": 12.5
+            },
+            {
+              "rxNumber": "0000001",
+              "fillNumber": 1,
+              "rxclaimNumber": "2222222222",
+              "claimStatus": "PAID",
+              "fillDate": "2026-09-01",
+              "daysSupplyQuantity": 30,
+              "dispensedQuantity": "30",
+              "drug": { "name": "EXAMPLEPRIL", "formStrengthName": "10 MG", "formName": "TABLET", "ndcId": "00000-0000-01", "brandGenericIndicator": "G" },
+              "pharmacy": { "pharmacyName": "Example Pharmacy", "pharmacyNPI": "0000000001" },
+              "prescriber": { "prescriberFirstName": "Sam", "prescriberLastName": "Example", "prescriberNPI": "0000000002" }
+            },
+            {
+              "rxNumber": "0000003",
+              "fillNumber": 0,
+              "rxclaimNumber": "3333333333",
+              "claimStatus": "REVERSED",
+              "fillDate": "2026-08-15",
+              "daysSupplyQuantity": 90,
+              "dispensedQuantity": "90",
+              "drug": { "name": "SAMPLESTATIN", "formStrengthName": "20 MG", "formName": "TABLET", "ndcId": "00000000003" },
+              "pharmacy": { "pharmacyName": "Sample Mail Pharmacy", "pharmacyNPI": "0000000003" },
+              "patientPayAmount": 30,
+              "planPaidAmount": 60,
+              "totalRxCost": 90
+            },
+            {
+              "rxNumber": "0000003",
+              "fillNumber": 0,
+              "rxclaimNumber": "4444444444",
+              "claimStatus": "PAID",
+              "fillDate": "2025-06-10",
+              "daysSupplyQuantity": 90,
+              "dispensedQuantity": "90",
+              "drug": { "name": "SAMPLESTATIN", "formStrengthName": "20 MG", "formName": "TABLET", "ndcId": "00000000003" },
+              "pharmacy": { "pharmacyName": "Sample Mail Pharmacy", "pharmacyNPI": "0000000003" }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

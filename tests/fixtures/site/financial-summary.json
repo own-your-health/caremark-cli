@@ -1,0 +1,54 @@
+{
+  "data": {
+    "getFinancialSummary": {
+      "statusCode": "0000",
+      "patients": [
+        {
+          "id": "SYN0000001",
+          "patient": { "firstName": "Alex", "lastName": "Example", "dateOfBirth": "1980-01-01", "personCode": "001" },
+          "linkedIDs": [
+            {
+              "prescriptionforPatient": [
+                {
+                  "id": "SYN-RX-1",
+                  "quantity": "30",
+                  "drugInfo": { "drug": { "name": "EXAMPLEPRIL", "formStrengthName": "10 MG", "formName": "TABLET", "ndcId": "00000000001" } },
+                  "fills": [
+                    { "dateTimeFilled": "2026-10-01T00:00:00", "pharmacyName": "Example Pharmacy", "patientPayAmount": 10, "planPaidAmount": 2.5, "totalRxCost": 12.5, "deductibleAmount": 0 },
+                    { "dateTimeFilled": "2026-09-01T00:00:00", "pharmacyName": "Example Pharmacy", "patientPayAmount": 10, "planPaidAmount": 2.5, "totalRxCost": 12.5, "deductibleAmount": 5, "manufacturerDiscountAmount": 1, "drugCouponInfo": { "patientSavings": 2 } }
+                  ]
+                },
+                {
+                  "id": "SYN-RX-3",
+                  "quantity": "90",
+                  "drugInfo": { "drug": { "name": "SAMPLESTATIN", "formStrengthName": "20 MG", "formName": "TABLET", "ndcId": "00000000003" } },
+                  "fills": [
+                    { "dateTimeFilled": "2025-06-10T00:00:00", "pharmacyName": "Sample Mail Pharmacy", "patientPayAmount": 30, "planPaidAmount": 60, "totalRxCost": 90, "deductibleAmount": 30 }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "SYN0000002",
+          "patient": { "firstName": "Sam", "lastName": "Example", "dateOfBirth": "1982-01-01", "personCode": "002" },
+          "linkedIDs": [
+            {
+              "prescriptionforPatient": [
+                {
+                  "id": "SYN-RX-4",
+                  "quantity": "1",
+                  "drugInfo": { "drug": { "name": "TESTOCILLIN", "formStrengthName": "250 MG/5ML", "formName": "SUSPENSION", "ndcId": "00000000004" } },
+                  "fills": [
+                    { "dateTimeFilled": "2026-07-04T00:00:00", "pharmacyName": "Test Pharmacy", "patientPayAmount": 5, "planPaidAmount": 15, "totalRxCost": 20 }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

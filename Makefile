@@ -54,7 +54,8 @@ dev:
 HERMETIC := CAREMARK_KEYCHAIN_SERVICE=piekstra.caremark.hermetic-tests XDG_DATA_HOME=$(CURDIR)/target/smoke-data \
 	XDG_CONFIG_HOME=$(CURDIR)/target/smoke-config
 SMOKE_COMMANDS := "auth login" "auth status" "auth logout" "auth reset" "profiles list" "profiles add" \
-	"profiles remove" "config path" "config show" api info completions self-update
+	"profiles remove" "config path" "config show" "patients list" "rx list" costs "records export" api info \
+	completions self-update
 smoke: build
 	@./target/debug/$(BIN) --version >/dev/null
 	@env -u CAREMARK_PROFILE ./target/debug/$(BIN) info >/dev/null

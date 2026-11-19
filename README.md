@@ -28,9 +28,23 @@ One profile per member account that signs in:
 caremark profiles add adult1
 caremark auth login --browser --profile adult1   # sign in in the Chrome window it opens
 
+caremark --profile adult1 patients list           # the people on the account, with their ids
+caremark --profile adult1 rx list                  # prescriptions filled in the last year
+caremark --profile adult1 costs --since 2026-01-01 # each fill's cost, and the sums
+caremark --profile adult1 records export --patient <ID> --ndjson | medrec import --from caremark
+
 # One read of the site, printed as the JSON it answers (docs/api.md lists them):
 caremark --profile adult1 api POST member-family --data '{"data":{}}'
 ```
+
+`records export` writes one person's Patient, Coverage, prescriptions
+(MedicationRequest), fills (MedicationDispense) and pharmacy claims
+(ExplanationOfBenefit, CARIN's Pharmacy EOB); `docs/fhir.md` maps every
+field. Without `--since` it reads a year at a time back to the first year in
+which no one on the account had a fill (at most 10). `-o <DIR>` writes the
+stream to `<DIR>/records.ndjson` instead and prints `records-export/v1`.
+`rx list` and `costs` read the last year unless `--since` says otherwise,
+everyone's unless `--patient`.
 
 `api` is read-only too: it sends a `GET`, the site's session check, or a
 `POST` to one of the experience reads caremark knows (by name, id or path),
@@ -50,11 +64,15 @@ Every command takes `--json` and prints one schema-tagged document.
 
 | Command | Output schema |
 | --- | --- |
+| `patients list` | `patient-list/v1` |
+| `rx list` | `rx-list/v1` |
+| `costs` | `cost-list/v1`: `items` and `totals` (fills not reversed) |
+| `records export` | `records-stream/v1` (`--ndjson`), or `records-export/v1` (`-o`) |
 | `api` | the site's own JSON answer |
 | `auth login` / `status` / `logout` / `reset` | `auth-login/v1` / `auth-status/v1` / `auth-logout/v1` / `auth-reset/v1` |
 | `profiles list` / `add` / `remove` | `profile-list/v1` / `profile-add/v1` / `profile-remove/v1` |
 | `config path` / `show` | `config-path/v1` / `config/v1` |
-| `info` | `cli-info/v1`: profile `health-records/v1`; capability `login-profiles`; `auth.required` true |
+| `info` | `cli-info/v1`: profile `health-records/v1`; capabilities `login-profiles`, `patients`, `rx`, `costs`, `records`, `api`; `auth.required` true |
 
 Exit codes: 0 ok, 2 usage, 3 sign-in not finished or session refused, 4
 not found, 5 the member site's answer could not decide, 6 a destructive

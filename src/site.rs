@@ -117,15 +117,22 @@ fn assigned(js: &str, name: &str) -> Option<String> {
     let mut rest = js;
     while let Some(at) = rest.find(name) {
         let after = &rest[at + name.len()..];
-        let before_ok = rest[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-        let value = after.trim_start().strip_prefix(':').map(str::trim_start).and_then(|v| {
-            let quote = v.chars().next().filter(|c| *c == '\'' || *c == '"')?;
-            let inner = &v[1..];
-            inner.find(quote).map(|end| &inner[..end])
-        });
+        let before = rest[..at].chars().next_back();
+        let before_ok = before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        // A quoted name (`"experienceApiKey": ...`) closes its quote first.
+        let key_end = match before {
+            Some(q @ ('"' | '\'')) => after.strip_prefix(q).unwrap_or(after),
+            _ => after,
+        };
+        let value = key_end
+            .trim_start()
+            .strip_prefix(':')
+            .map(str::trim_start)
+            .and_then(|v| {
+                let quote = v.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+                let inner = &v[1..];
+                inner.find(quote).map(|end| &inner[..end])
+            });
         match value {
             Some(v) if before_ok && !v.is_empty() => return Some(v.to_string()),
             _ => rest = after,
@@ -359,6 +366,12 @@ mod tests {
         assert_eq!(k.introspect, "ZHVtbXk6a2V5");
         assert_eq!(format!("{k:?}"), "SiteKeys(..)", "Debug never shows a key");
         assert!(SiteKeys::parse("window.apiConfig = { experienceApiKey: '' };").is_none());
+        let quoted =
+            SiteKeys::parse(r#"window.apiConfig = {"experienceApiKey":"e-key","introspectApiKey":"i-key"};"#).unwrap();
+        assert_eq!(
+            (quoted.experience.as_str(), quoted.introspect.as_str()),
+            ("e-key", "i-key")
+        );
         assert!(SiteKeys::parse("experienceApiKey: 'a'").is_none(), "both keys or none");
         // A longer name that ends in the key's is not the key.
         assert!(SiteKeys::parse("xexperienceApiKey: 'a', introspectApiKey: 'b'").is_none());
