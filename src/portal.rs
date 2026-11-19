@@ -7,7 +7,7 @@ use pk_cli_core::CliError;
 use serde_json::Value;
 
 use crate::cents::Cents;
-use crate::model::{fill_id, ndc11, patient_id, Amounts, BrandGeneric, Drug, Fill, Party, Person};
+use crate::model::{days_in_month, fill_id, ndc11, patient_id, Amounts, BrandGeneric, Drug, Fill, Party, Person};
 
 /// The experience API's success code, in every answer's own `statusCode`.
 pub const OK: &str = "0000";
@@ -62,14 +62,7 @@ pub fn date(raw: &str) -> Option<String> {
     let s = raw.trim();
     let ok = |y: &str, m: &str, d: &str| {
         let (y, m, d) = (y.parse::<u32>().ok()?, m.parse::<u32>().ok()?, d.parse::<u32>().ok()?);
-        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let days = match m {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 if leap => 29,
-            2 => 28,
-            _ => return None,
-        };
+        let days = days_in_month(i64::from(y), m);
         ((1900..=2200).contains(&y) && (1..=days).contains(&d)).then(|| format!("{y:04}-{m:02}-{d:02}"))
     };
     let digits = |p: &str, n: usize| p.len() == n && p.bytes().all(|b| b.is_ascii_digit());

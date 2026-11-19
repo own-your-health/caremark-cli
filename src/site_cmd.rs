@@ -4,9 +4,9 @@
 //! [`run`] takes an [`Env`]: where sessions are kept and which site is
 //! read. The binary's is the vault and www.caremark.com a second apart; the
 //! tests' is an in-memory vault and a loopback server. Every document goes
-//! to `out`; the session is written back once the command has done what it
-//! was asked, or after the site cut any command short (exit 5), and never
-//! after a refused session (exit 3) or another error.
+//! to `out`; the cookies the site's answers set are written back to the
+//! session after every command but one the site refused the session to
+//! (exit 3).
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -28,7 +28,7 @@ use crate::cents::Cents;
 use crate::cli::*;
 use crate::client::{self, experience, Client};
 use crate::fhir;
-use crate::model::{nth_fill_id, prescription_id, Fill, Person, Prescription};
+use crate::model::{days_in_month, nth_fill_id, prescription_id, Fill, Person, Prescription};
 use crate::portal::{self, CostedFill};
 use crate::session::{Session, SessionStore};
 use crate::site::SiteKeys;
@@ -182,13 +182,13 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
         }
         _ => Err(CliError::Other("not a member-site command".into())),
     };
-    // After the command did what it was asked, or after the site cut any
-    // command short (exit 5: an error, or an export's incomplete stream):
-    // the answers' cookies are the session's. Not after a refused session
-    // (exit 3) or a request never sent.
+    // Whatever the command's outcome, the answers the site accepted set the
+    // session's cookies: a usage error after the family read, or a 5xx in
+    // the third year, keeps them. Not after a refused session (exit 3). A
+    // command that sent no request has no cookie to write.
     let keep = match &result {
-        Ok(code) => *code == 0 || *code == 5,
-        Err(e) => e.exit_code() == 5,
+        Ok(code) => *code != 3,
+        Err(e) => e.exit_code() != 3,
     };
     if keep {
         write_back(&ctx.client, &env.sessions, profile, &read_header);
@@ -236,9 +236,19 @@ fn rewritten(current: Option<&Session>, read_header: &str, updated: Secret) -> O
         .map(|c| c.with_cookie_header(updated))
 }
 
-/// A `YYYY-MM-DD` date, zero-padded, so it compares as a string.
+/// A `YYYY-MM-DD` date, zero-padded, so it compares as a string. A day
+/// the month does not have is refused here: `dates::parse_iso` takes any
+/// day from 1 to 31.
 pub fn iso(d: &str) -> Result<String, CliError> {
-    Ok(dates::fmt_iso(dates::parse_iso(d.trim())?))
+    let (y, m, day) = dates::parse_iso(d.trim())?;
+    let days = days_in_month(y, m);
+    if day > days {
+        return Err(CliError::Usage(format!(
+            "expected a real date (YYYY-MM-DD), got `{}`: that month has {days} days",
+            d.trim()
+        )));
+    }
+    Ok(dates::fmt_iso((y, m, day)))
 }
 
 /// A list command's checked range: `since` and `until` as `YYYY-MM-DD`.
@@ -616,6 +626,7 @@ fn patients(ctx: &Ctx, out: &mut dyn Write) -> Result<(), CliError> {
 #[derive(Serialize)]
 struct RxRow {
     patient: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     rx_number: Option<String>,
     drug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -724,7 +735,8 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
 /// A `cost-list/v1` item: one fill and what it cost.
 #[derive(Serialize)]
 struct CostRow {
-    filled: Option<String>,
+    /// Always given: an undated fill is left out of every pull.
+    filled: String,
     patient: String,
     drug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -732,7 +744,7 @@ struct CostRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pharmacy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    total: Option<Money>,
+    total_cost: Option<Money>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_paid: Option<Money>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -750,7 +762,7 @@ struct CostRow {
 #[derive(Serialize)]
 struct CostTotals {
     fills: usize,
-    total: Money,
+    total_cost: Money,
     plan_paid: Money,
     you_paid: Money,
     deductible: Money,
@@ -761,7 +773,7 @@ const COST_COLUMNS: &[&str] = &[
     "filled",
     "drug",
     "pharmacy",
-    "total",
+    "total_cost",
     "plan_paid",
     "you_paid",
     "deductible",
@@ -778,7 +790,7 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
     let sum = |pick: fn(&Fill) -> Option<Cents>| counted.iter().filter_map(|f| pick(f)).sum::<Cents>().money();
     let totals = CostTotals {
         fills: counted.len(),
-        total: sum(|f| f.amounts.total),
+        total_cost: sum(|f| f.amounts.total),
         plan_paid: sum(|f| f.amounts.plan_paid),
         you_paid: sum(|f| f.amounts.patient_paid),
         deductible: sum(|f| f.amounts.deductible),
@@ -789,12 +801,12 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
         .take(args.range.limit.map_or(usize::MAX, |n| n as usize))
         .map(|f| {
             let row = CostRow {
-                filled: f.filled.clone(),
+                filled: f.filled.clone().unwrap_or_default(),
                 patient: f.patient.clone(),
                 drug: f.drug.label(),
                 rx_number: f.rx_number.clone(),
                 pharmacy: f.pharmacy.name.clone(),
-                total: f.amounts.total.map(Cents::money),
+                total_cost: f.amounts.total.map(Cents::money),
                 plan_paid: f.amounts.plan_paid.map(Cents::money),
                 you_paid: f.amounts.patient_paid.map(Cents::money),
                 deductible: f.amounts.deductible.map(Cents::money),
@@ -829,7 +841,7 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
             "\nOver {} fill{} (reversed claims left out): total {}, plan paid {}, you paid {}, deductible {}, discounts {}",
             totals.fills,
             if totals.fills == 1 { "" } else { "s" },
-            money(&totals.total),
+            money(&totals.total_cost),
             money(&totals.plan_paid),
             money(&totals.you_paid),
             money(&totals.deductible),

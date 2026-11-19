@@ -226,6 +226,18 @@ pub fn prescription_id(patient: &str, rx_number: &str) -> String {
     hashed("mr", &[patient, "rx", rx_number], 16)
 }
 
+/// The days month `m` (1 to 12) of year `y` has; 0 for no such month.
+pub fn days_in_month(y: i64, m: u32) -> u32 {
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
 /// An NDC as 11 digits: `00000-0000-01` and `00000000001` alike. `None`
 /// for anything else.
 pub fn ndc11(raw: &str) -> Option<String> {

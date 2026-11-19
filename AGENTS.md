@@ -86,12 +86,12 @@ member; `docs/api.md` § Route), accepting the risk under its Terms of Use
   GETs nothing else of note. It follows no redirect and maps answers to exit
   codes: a 401 or a redirect is 3 (`auth login --browser --profile <NAME>
   --overwrite`), the edge's 403 page, 429 and 5xx are 5. A `Set-Cookie`
-  updates the jar, written back once the command has succeeded, unless a
-  newer sign-in replaced the stored session meanwhile
-  (`site_cmd::write_back`). Any command the site cut short (exit 5: an
-  edge refusal, a 5xx, a changed answer, an export's incomplete stream)
-  writes its earlier answers' cookies back too; one that ended on a
-  refused session (exit 3) writes none.
+  updates the jar, written back after every command, unless a newer
+  sign-in replaced the stored session meanwhile (`site_cmd::write_back`):
+  a command the site cut short (exit 5) or one that failed on its own
+  check after a read (a `--patient` that names no one) keeps the cookies
+  the site's answers set. A command that ended on a refused session
+  (exit 3) writes none.
 - **Mapping.** `auth login --browser --log-requests <SECONDS>` prints the
   endpoints the site's pages called, ids hidden except the experience ids,
   which are the site's constants. `caremark api POST <experience> --data

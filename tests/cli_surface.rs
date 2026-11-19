@@ -427,21 +427,40 @@ fn api_requests_are_checked_first() {
 /// or the site; then they need a configured profile, then a stored session.
 #[test]
 fn record_commands_check_their_arguments_first() {
-    for args in [
-        // --json is added below: with --ndjson it is a usage error.
-        vec!["records", "export", "--ndjson"],
-        vec!["records", "export", "--since", "2026-02-30", "--ndjson"],
-        vec!["costs", "--since", "2026-02-02", "--until", "2026-02-01"],
-        vec!["rx", "list", "--until", "soon"],
+    for (args, names) in [
+        (vec!["records", "export", "--ndjson", "--json"], "--ndjson"),
+        (
+            vec!["costs", "--since", "2026-02-02", "--until", "2026-02-01", "--json"],
+            "2026-02",
+        ),
+        (vec!["rx", "list", "--until", "soon", "--json"], "soon"),
+        (vec!["costs", "--since", "2026-04-31", "--json"], "2026-04-31"),
     ] {
-        let out = caremark()
-            .env("XDG_CONFIG_HOME", tmp())
-            .args(&args)
-            .arg("--json")
-            .assert()
-            .code(2);
-        let e = error_of(&out);
-        assert!(!e.to_string().contains("profiles add"), "{args:?}: {e}");
+        let out = caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
+        let e = error_of(&out).to_string();
+        assert!(!e.contains("profiles add") && e.contains(names), "{args:?}: {e}");
+    }
+    // An export's own errors, on stderr: --ndjson takes stdout, so no --json.
+    for (args, names) in [
+        (
+            vec!["records", "export", "--since", "2026-02-30", "--ndjson"],
+            "that month has 28 days",
+        ),
+        (
+            vec![
+                "records",
+                "export",
+                "--since",
+                "2028-02-30",
+                "-o",
+                "target/never-written",
+            ],
+            "that month has 29 days",
+        ),
+    ] {
+        let out = caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(!err.contains("profiles add") && err.contains(names), "{args:?}: {err}");
     }
     // clap's own refusals: no destination, and two.
     caremark()

@@ -76,7 +76,20 @@ fn number(raw: &str) -> Option<Value> {
     if !ok {
         return None;
     }
-    serde_json::from_str::<serde_json::Number>(raw).ok().map(Value::Number)
+    // JSON's grammar takes no leading zero (`030`), and the site zero-pads
+    // numbers.
+    let (int, frac) = raw.split_once('.').map_or((raw, None), |(i, f)| (i, Some(f)));
+    let int = match int.trim_start_matches('0') {
+        "" => "0",
+        rest => rest,
+    };
+    let plain = match frac {
+        Some(f) => format!("{int}.{f}"),
+        None => int.to_string(),
+    };
+    serde_json::from_str::<serde_json::Number>(&plain)
+        .ok()
+        .map(Value::Number)
 }
 
 /// The drug as a CodeableConcept: RxNorm first when known (medrec prefers
@@ -638,6 +651,10 @@ mod tests {
     fn quantities_are_plain_numbers_only() {
         assert_eq!(number("30"), Some(json!(30)));
         assert_eq!(number("2.5"), Some(json!(2.5)));
+        assert_eq!(number("030"), Some(json!(30)));
+        assert_eq!(number("0.5"), Some(json!(0.5)));
+        assert_eq!(number("007.5"), Some(json!(7.5)));
+        assert_eq!(number("000"), Some(json!(0)));
         for bad in ["", "1.2.3", ".5", "5.", "-1", "30 TAB"] {
             assert_eq!(number(bad), None, "{bad}");
         }

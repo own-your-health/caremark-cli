@@ -407,7 +407,7 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     assert_eq!(items[0]["you_paid"]["amount"], "10.00");
     // The claim gave no amounts; the financial summary did.
     let september = items.iter().find(|i| i["filled"] == "2026-09-01").unwrap();
-    assert_eq!(september["total"]["amount"], "12.50");
+    assert_eq!(september["total_cost"]["amount"], "12.50");
     assert_eq!(september["deductible"]["amount"], "5.00");
     assert_eq!(september["discount"]["amount"], "3.00");
     let reversed = items.iter().find(|i| i["filled"] == "2026-08-15").unwrap();
@@ -415,7 +415,7 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     let totals = &doc["totals"];
     // Sam's claim gives no amounts, so it adds a fill and no money.
     assert_eq!(totals["fills"], 4);
-    assert_eq!(totals["total"]["amount"], "115.00");
+    assert_eq!(totals["total_cost"]["amount"], "115.00");
     assert_eq!(totals["plan_paid"]["amount"], "65.00");
     assert_eq!(totals["you_paid"]["amount"], "50.00");
     assert_eq!(totals["deductible"]["amount"], "35.00");
@@ -769,6 +769,17 @@ fn a_list_the_site_cut_short_keeps_its_cookies() {
 }
 
 #[test]
+fn a_mistyped_patient_after_the_family_read_keeps_its_cookies() {
+    let h = Household::new();
+    h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
+    let e = h.run(&["rx", "list", "--patient", "Nobody"]).unwrap_err();
+    assert_eq!(e.exit_code(), 4);
+    let e = h.run(&["records", "export", "--ndjson"]).unwrap_err();
+    assert_eq!(e.exit_code(), 2);
+    assert!(h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
+}
+
+#[test]
 fn a_list_the_site_refused_keeps_no_cookie() {
     let h = Household::new();
     h.server.fault(Fault {
@@ -870,7 +881,7 @@ fn costs_limit_shortens_the_rows_not_the_totals() {
     assert_eq!(doc["items"].as_array().unwrap().len(), 1);
     assert_eq!(doc["total"], 4);
     assert_eq!(doc["totals"]["fills"], 3);
-    assert_eq!(doc["totals"]["total"]["amount"], "115.00");
+    assert_eq!(doc["totals"]["total_cost"]["amount"], "115.00");
 }
 
 #[test]
