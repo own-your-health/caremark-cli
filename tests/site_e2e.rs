@@ -802,6 +802,26 @@ fn a_family_with_only_another_id_field_is_the_sites_failure() {
 }
 
 #[test]
+fn errors_naming_a_person_carry_no_id() {
+    let h = Household::new();
+    let ids: Vec<String> = h.json(&["patients", "list"])["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap().to_string())
+        .collect();
+    let several = h.run(&["records", "export", "--ndjson"]).unwrap_err();
+    assert_eq!(several.exit_code(), 2);
+    let missing = h.run(&["rx", "list", "--patient", "p000000000000"]).unwrap_err();
+    assert_eq!(missing.exit_code(), 4);
+    for e in [several, missing] {
+        let text = format!("{} {}", e.message(), e.remedy().unwrap_or_default());
+        assert!(ids.iter().all(|id| !text.contains(id.as_str())), "{text}");
+        assert!(!text.contains("p000000000000"), "{text}");
+    }
+}
+
+#[test]
 fn a_fill_on_a_shared_boundary_day_is_counted_once() {
     let h = Household::new();
     // One costed fill no claim has, on the day the two windows share.

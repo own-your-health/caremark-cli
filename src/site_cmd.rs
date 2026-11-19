@@ -268,15 +268,17 @@ fn people(ctx: &Ctx) -> Result<Vec<Person>, CliError> {
 }
 
 /// The person `q` names: an id from `patients list`, or a first name.
-/// Without `q`, the only person on the account.
+/// Without `q`, the only person on the account. The errors name no one and
+/// echo no `q`: an id is a digest of short identifiers, which trying every
+/// value recovers, so it stays out of error text (medical-common
+/// PRIVACY.md).
 fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliError> {
     let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) else {
         return match people {
             [one] => Ok(one),
             many => Err(CliError::Usage(format!(
-                "pass --patient <ID>: there are {} people on this account ({}); `{BIN} patients list` names them",
-                many.len(),
-                many.iter().map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")
+                "pass --patient <ID>: there are {} people on this account; `{BIN} patients list` names them",
+                many.len()
             ))),
         };
     };
@@ -289,10 +291,10 @@ fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliErro
         .collect();
     match by_name.as_slice() {
         [one] => Ok(one),
-        [] => Err(CliError::NotFound(format!("no one on this account is `{q}`"))
+        [] => Err(CliError::NotFound("--patient names no one on this account".into())
             .with_remedy(format!("`{BIN} patients list` shows their ids"))),
         _ => Err(CliError::Usage(format!(
-            "`{q}` names more than one person on this account; pass the id from `{BIN} patients list`"
+            "--patient names more than one person on this account (a first name they share); pass the id from `{BIN} patients list`"
         ))),
     }
 }
