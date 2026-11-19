@@ -1,0 +1,19 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+.DS_Store
+
+# Never commit real Caremark data: no downloaded statements, claim or
+# prescription reports, portal captures or HAR files. Fixtures are synthetic
+# (tests/fixtures/README.md).
+/captures
+*.har
+*.raw.json
+*.raw.html
+*.pdf
+*.csv
+*.xlsx
+*.ndjson
+
+# twapp session files
+.twapp-*
