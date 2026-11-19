@@ -9,10 +9,9 @@ every insurer's claims the same way. Every resource carries
 and `meta.lastUpdated` (medical-common DESIGN.md §1.4). That is the
 stream header's `pulled_at`, since the site shows no date of its own for
 when a fill or a person last changed. The exception is a MedicationRequest,
-dated by its latest fill (`YYYY-MM-DDT00:00:00Z`). It is built from the
-fills in the pull's range, so a narrower pull (a later `--since`) carries
-the same date and never outranks a fuller copy already filed; a new fill
-makes it newer. Every fill in a stream brings its MedicationRequest,
+dated by its latest fill (`YYYY-MM-DDT00:00:00Z`) and built from that fill
+alone, so a narrower pull (a later `--since`) writes the same content under
+the same date; a new fill makes it newer. Every fill in a stream brings its MedicationRequest,
 whatever `--since` bounds, so the header's `since_unbounded` names only
 Coverage, Organization and Patient.
 
@@ -29,15 +28,22 @@ One export is one person's: the stream's `patient` is that person's
 | `MedicationRequest` | `mr` and 16 hex digits | the patient id and the prescription number |
 | `MedicationDispense`, `ExplanationOfBenefit` | `rx` and 16 hex digits, the same for a fill's two | the claim number; else the prescription number, fill number and date; else the date and the drug (`model::fill_id`). A second claim of one read with the same id and no claim number (a split fill) gets its own (`model::nth_fill_id`) |
 
+Every id is a SHA-256 digest of its parts, each written as its length in
+bytes and `:` before it (medical-common DESIGN.md §1.3), so no two sets of
+parts hash alike.
+
 The ids carry no name, member id or prescription number, and they are the
 same on every pull, so a re-export replaces rather than duplicates. They
 are fixed from v0.1.0, which is released only after a signed-in read has
 confirmed the answer paths they are built from (the claim number above
 all). A later change to them is a breaking change, named in its release. They
-are keyed on the account signed in: a person seen from two sign-ins (a
-spouse with a login of their own on the cardholder's account) gets one id
-per sign-in, which medrec files as one source's two patients until its
-people are joined. A family answer without the member's own id is exit 5
+are keyed on the account signed in: the family read shows no identifier
+that every sign-in on an account shares, so a person seen from two sign-ins
+(a spouse with a login of their own on the cardholder's account) gets one
+id per sign-in. medrec then files one source's two patients, which a hand
+merge can join, never one patient for two people (DESIGN.md §1.3). If the
+first signed-in read shows an account-level identifier, the ids move to it
+before v0.1.0. A family answer without the member's own id is exit 5
 rather than ids that could collide.
 
 A MedicationRequest is built from its prescription's latest fill alone:
@@ -52,7 +58,7 @@ one write the same request under the same date.
 | `Organization` | `name` `CVS Caremark`, `type` `pay` | |
 | `Patient` | `name` (`text`, `family`, `given`), `birthDate` | the family list's `firstName`, `lastName`, `dateOfBirth` |
 | `Coverage` | `status` `active`, `type` v3-ActCode `DRUGPOL`, `beneficiary`, `payor` Caremark, `relationship` `self` for the cardholder | `relationship: CARDHOLDER` |
-| `MedicationRequest` | `identifier` (the Rx number), `status` (`unknown` unless the site says), `intent` `order`, `medicationCodeableConcept`, `subject`, `requester` (name and NPI), `dispenseRequest.numberOfRepeatsAllowed` | the claims of one Rx number: the latest fill's drug, the first prescriber given |
+| `MedicationRequest` | `identifier` (the Rx number), `status` (`unknown` unless the site says), `intent` `order`, `medicationCodeableConcept`, `subject`, `requester` (name and NPI), `dispenseRequest.numberOfRepeatsAllowed` | the latest fill of one Rx number: its drug, its prescriber, its refills authorized |
 | `MedicationDispense` | `identifier` (Rx number; claim number with C4BB type `uc`) | `rxNumber`, `rxclaimNumber` |
 | | `status`: `completed`, or `cancelled` for a reversed claim | `claimStatus` |
 | | `medicationCodeableConcept`: RxNorm when known, then the NDC (11 digits, `http://hl7.org/fhir/sid/ndc`), then the GPI; `text` the site's label | `drug.ndcId`, `drug.genericProductId`, `drug.name` + `formStrengthName` + `formName` |

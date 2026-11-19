@@ -161,10 +161,18 @@ impl Drug {
     }
 }
 
-/// `prefix` and the first `hex` hex digits of SHA-256 of `parts` joined by
-/// `|`.
+/// `prefix` and the first `hex` hex digits of SHA-256 of `parts`, each
+/// written as its length in bytes and `:` before it, so two different lists
+/// of parts never run together into one input (medical-common DESIGN.md
+/// §1.3).
 fn hashed(prefix: &str, parts: &[&str], hex: usize) -> String {
-    let digest = Sha256::digest(parts.join("|").as_bytes());
+    let mut sha = Sha256::new();
+    for part in parts {
+        sha.update(part.len().to_string().as_bytes());
+        sha.update(b":");
+        sha.update(part.as_bytes());
+    }
+    let digest = sha.finalize();
     let mut s = String::with_capacity(prefix.len() + hex);
     s.push_str(prefix);
     for b in digest.iter() {
@@ -283,6 +291,14 @@ mod tests {
         let mr = prescription_id(&p, "0000001");
         assert_eq!(mr.len(), 18);
         assert_ne!(mr, prescription_id(&p, "0000002"));
+    }
+
+    #[test]
+    fn parts_never_run_together() {
+        assert_ne!(hashed("x", &["a|b", "c"], 16), hashed("x", &["a", "b|c"], 16));
+        assert_ne!(hashed("x", &["ab", ""], 16), hashed("x", &["a", "b"], 16));
+        assert_ne!(hashed("x", &["1:a"], 16), hashed("x", &["", "a"], 16));
+        assert_ne!(patient_id("SYNM00000", "1001"), patient_id("SYNM000001", "001"));
     }
 
     #[test]
