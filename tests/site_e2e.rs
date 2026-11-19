@@ -395,14 +395,14 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     let doc = h.json(&["costs", "--since", "2025-01-01"]);
     assert_eq!(doc["schema"], "cost-list/v1");
     let items = doc["items"].as_array().unwrap();
-    // Alex's four claims. Sam's fill, which only the financial summary
-    // lists, is left out: it could be a claim the two reads write
-    // differently.
-    assert_eq!(items.len(), 4, "{items:?}");
+    // Alex's four claims and Sam's one. Sam's TESTOCILLIN fill, which only
+    // the financial summary lists, is left out: it could be a claim the two
+    // reads write differently.
+    assert_eq!(items.len(), 5, "{items:?}");
     assert!(items.iter().all(|i| i["drug"] != "TESTOCILLIN 250 MG/5ML SUSPENSION"));
     // The JSON says so too, not only stderr.
     assert_eq!(doc["left_out"], json!({ "unmatched": 1, "undated": 0 }));
-    assert_eq!(doc["total"], 4);
+    assert_eq!(doc["total"], 5);
     assert_eq!(items[0]["filled"], "2026-10-01");
     assert_eq!(items[0]["you_paid"]["amount"], "10.00");
     // The claim gave no amounts; the financial summary did.
@@ -413,7 +413,8 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     let reversed = items.iter().find(|i| i["filled"] == "2026-08-15").unwrap();
     assert_eq!(reversed["reversed"], true);
     let totals = &doc["totals"];
-    assert_eq!(totals["fills"], 3);
+    // Sam's claim gives no amounts, so it adds a fill and no money.
+    assert_eq!(totals["fills"], 4);
     assert_eq!(totals["total"]["amount"], "115.00");
     assert_eq!(totals["plan_paid"]["amount"], "65.00");
     assert_eq!(totals["you_paid"]["amount"], "50.00");
@@ -671,6 +672,35 @@ fn an_export_to_a_folder_that_cannot_be_written_reads_nothing() {
 }
 
 #[test]
+fn claims_under_another_key_are_the_sites_failure_not_an_empty_account() {
+    let h = Household::new();
+    // Status 0000, but the list is not where the site's scripts read it.
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: json!({ "data": { "getClaimV2": { "statusCode": "0000", "claimList": [] } } }).to_string(),
+    });
+    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    assert_eq!(code, 5);
+    let trailer = lines.last().unwrap();
+    assert_eq!(trailer["complete"], false);
+    assert!(
+        trailer["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("gave no claim for"),
+        "{trailer}"
+    );
+    assert_eq!(h.run(&["costs", "--patient", "Alex"]).unwrap_err().exit_code(), 5);
+    // Someone the financial summary lists nothing for is an empty account:
+    // Jordan has no fills, and that is no failure.
+    let doc = h.json(&["costs", "--patient", "Jordan"]);
+    assert_eq!(doc["items"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn an_export_to_a_folder_cut_short_is_named_incomplete() {
     let h = Household::new();
     h.server.fault(Fault {
@@ -844,7 +874,10 @@ fn a_fill_only_the_financial_summary_lists_is_a_skip() {
     assert_eq!(code, 0);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["complete"], true);
-    assert!(of_type(&lines, "MedicationDispense").is_empty());
+    // Sam's one claim; the TESTOCILLIN fill no claim has is the skip.
+    let dispenses = of_type(&lines, "MedicationDispense");
+    assert_eq!(dispenses.len(), 1);
+    assert_eq!(dispenses[0]["whenHandedOver"], "2026-05-05");
     let skipped = trailer["skipped"].as_array().unwrap();
     assert_eq!(skipped.len(), 1, "{skipped:?}");
     assert_eq!(skipped[0]["code"], "unmatched");

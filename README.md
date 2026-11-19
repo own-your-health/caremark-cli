@@ -78,7 +78,7 @@ Every command takes `--json` and prints one schema-tagged document.
 | `auth login` / `status` / `logout` / `reset` | `auth-login/v1` / `auth-status/v1` / `auth-logout/v1` / `auth-reset/v1` |
 | `profiles list` / `add` / `remove` | `profile-list/v1` / `profile-add/v1` / `profile-remove/v1` |
 | `config path` / `show` | `config-path/v1` / `config/v1` |
-| `info` | `cli-info/v1`: profile `health-records/v1`; capabilities `login-profiles`, `patients`, `rx`, `costs`, `records`, `api`; `auth.required` true |
+| `info` | `cli-info/v1`: profile `health-records/v1`; capabilities `profiles`, `patients`, `rx`, `costs`, `records`, `api`, `login-profiles`; `auth.required` true |
 
 Exit codes: 0 ok, 2 usage, 3 sign-in not finished or session refused, 4
 not found, 5 the member site's answer could not decide (an export's stream

@@ -59,6 +59,22 @@
               "pharmacy": { "pharmacyName": "Sample Mail Pharmacy", "pharmacyNPI": "0000000003" }
             }
           ]
+        },
+        {
+          "personCode": "002",
+          "claims": [
+            {
+              "rxNumber": "0000005",
+              "fillNumber": 0,
+              "rxclaimNumber": "6666666666",
+              "claimStatus": "PAID",
+              "fillDate": "2026-05-05",
+              "daysSupplyQuantity": 30,
+              "dispensedQuantity": "30",
+              "drug": { "name": "SAMPLEZOLE", "formStrengthName": "5 MG", "formName": "TABLET", "ndcId": "00000000005", "brandGenericIndicator": "G" },
+              "pharmacy": { "pharmacyName": "Test Pharmacy", "pharmacyNPI": "0000000001" }
+            }
+          ]
         }
       ]
     }

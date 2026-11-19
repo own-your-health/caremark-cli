@@ -385,6 +385,9 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     let mut fills = Vec::new();
     let mut matched = HashSet::new();
     let mut unmatched = HashSet::new();
+    // Per person: the claims read, and the costed fills the financial
+    // summary listed, over every window.
+    let mut read: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     let mut error = None;
     'windows: for w in windows(since, &until) {
         let costed = match financial(ctx, &w) {
@@ -402,7 +405,11 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
                     break 'windows;
                 }
             };
-            for (key, hit) in portal::add_costs(&mut found, p, &costed) {
+            let joined = portal::add_costs(&mut found, p, &costed);
+            let counts = read.entry(p.key.as_str()).or_default();
+            counts.0 += found.len();
+            counts.1 += joined.len();
+            for (key, hit) in joined {
                 if hit {
                     matched.insert(key);
                 } else {
@@ -425,6 +432,17 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
                     fills.push(f);
                 }
             }
+        }
+    }
+    // The financial summary lists a person's fills, yet the claim history
+    // gave that person no claim in any year: its answer's shape changed (a
+    // list under another key reads as none), not the account.
+    if error.is_none() {
+        if let Some((_, (_, costed))) = read.iter().find(|(_, (claims, costed))| *claims == 0 && *costed > 0) {
+            error = Some(CliError::Upstream(format!(
+                "the financial summary lists {costed} fill{} the claim history gave no claim for; the claim history's answer may have changed (docs/api.md)",
+                if *costed == 1 { "" } else { "s" }
+            )));
         }
     }
     let undated = fills.iter().filter(|f| f.filled.is_none()).count();

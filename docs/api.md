@@ -159,6 +159,13 @@ and counted (`docs/fhir.md`, Amounts). Until a signed-in answer confirms
 the two reads write a fill alike (the date as a calendar day, the
 prescription number's leading zeros), expect some to be counted.
 
+An answer whose list is not where the scripts read it reads as no claims,
+so caremark checks the two reads against each other. When the financial
+summary lists a person's fills and the claim history gave that person no
+claim in any year, the claim history's shape has changed: the export ends
+incomplete and `costs`/`rx list` fail, exit 5. When every claim read has no
+date caremark reads, the same.
+
 The same scripts hold experiences that write (refills, orders, carts,
 transfers, notification marks, reimbursement claims, prior-authorization
 requests, preferences). caremark lists none of them, and `caremark api`

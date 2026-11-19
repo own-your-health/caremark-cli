@@ -16,7 +16,8 @@ values.
 The household: Alex Example (the cardholder, person code 001), Sam Example
 (spouse, 002) and Jordan Example (child, 003). Alex has two fills of
 EXAMPLEPRIL, a reversed fill of SAMPLESTATIN and an older paid one; Sam has
-one fill of TESTOCILLIN that only the financial summary lists.
+one claim of SAMPLEZOLE, with no amounts, and one fill of TESTOCILLIN that
+only the financial summary lists.
 
 ## The dummies
 
