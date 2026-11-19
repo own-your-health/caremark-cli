@@ -38,6 +38,7 @@ same on every pull, so a re-export replaces rather than duplicates.
 | | `authorizingPrescription`: the MedicationRequest | |
 | | `type`: v3-ActCode `FF` (first fill) or `RF` (refill) | `fillNumber` 0 or more |
 | | `quantity`, `daysSupply` (UCUM `d`) | `dispensedQuantity`, `daysSupplyQuantity` |
+| | `dosageInstruction[0].text`: the directions on the label, left out when the site gives none | `sig`, `directions` or `dosageInstructions` (names from the site's scripts, unconfirmed) |
 | | `whenHandedOver`: the claim's date of service, as Da Vinci PDex maps it | `fillDate` |
 | `ExplanationOfBenefit` | `type` claim-type `pharmacy`, `use` `claim`, `status` `active` or `cancelled` | |
 | | `billablePeriod` and `created`: the fill date (`_created` data-absent-reason when there is none) | |
@@ -59,9 +60,12 @@ same on every pull, so a re-export replaces rather than duplicates.
 | `memberliability` | C4BBAdjudication | what the member paid (`patientPayAmount`) |
 
 A claim that gives no amounts takes them from the financial summary's
-fill of the same day and drug (`portal::add_costs`). A fill only the
-financial summary lists is exported too, with what it gives: drug, date,
-pharmacy name, quantity and amounts.
+fill of the same day and drug, and the same prescription number (leading
+zeros aside) when both give one (`portal::add_costs`). A fill only the
+financial summary lists is left out: it may be a claim the two reads write
+differently, and a second id for one dispense would stay in medrec. The
+trailer counts them in one skip, code `unmatched`, resource type
+`MedicationDispense`, and `costs` and `rx list` say so on stderr.
 
 ## What medrec reads
 

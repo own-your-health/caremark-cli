@@ -393,9 +393,11 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     let doc = h.json(&["costs", "--since", "2025-01-01"]);
     assert_eq!(doc["schema"], "cost-list/v1");
     let items = doc["items"].as_array().unwrap();
-    // Alex's four claims and Sam's fill, which only the financial summary
-    // lists.
-    assert_eq!(items.len(), 5, "{items:?}");
+    // Alex's four claims. Sam's fill, which only the financial summary
+    // lists, is left out: it could be a claim the two reads write
+    // differently.
+    assert_eq!(items.len(), 4, "{items:?}");
+    assert!(items.iter().all(|i| i["drug"] != "TESTOCILLIN 250 MG/5ML SUSPENSION"));
     assert_eq!(items[0]["filled"], "2026-10-01");
     assert_eq!(items[0]["you_paid"]["amount"], "10.00");
     // The claim gave no amounts; the financial summary did.
@@ -406,10 +408,12 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
     let reversed = items.iter().find(|i| i["filled"] == "2026-08-15").unwrap();
     assert_eq!(reversed["reversed"], true);
     let totals = &doc["totals"];
-    assert_eq!(totals["fills"], 4);
-    assert_eq!(totals["total"]["amount"], "135.00");
-    assert_eq!(totals["you_paid"]["amount"], "55.00");
+    assert_eq!(totals["fills"], 3);
+    assert_eq!(totals["total"]["amount"], "115.00");
+    assert_eq!(totals["plan_paid"]["amount"], "65.00");
+    assert_eq!(totals["you_paid"]["amount"], "50.00");
     assert_eq!(totals["deductible"]["amount"], "35.00");
+    assert_eq!(totals["discount"]["amount"], "3.00");
 }
 
 #[test]
@@ -422,7 +426,10 @@ fn an_export_is_one_persons_fills_as_fhir() {
     assert_eq!(header["method"], "portal");
     assert_eq!(header["organization"]["id"], "caremark");
     assert_eq!(header["patient"]["name"], "Alex Example");
-    assert!(header.get("since").is_none());
+    // Without --since, the last ten years, every one of them read.
+    assert_eq!(header["since"], "2016-11-19");
+    assert_eq!(h.reads(CLAIMS).len(), 10);
+    assert_eq!(h.reads(FINANCIAL).len(), 10);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["schema"], "records-stream-end/v1");
     assert_eq!(trailer["complete"], true);
@@ -459,8 +466,6 @@ fn an_export_is_one_persons_fills_as_fhir() {
         eob["patient"]["reference"],
         format!("Patient/{}", patient["id"].as_str().unwrap())
     );
-    // Back from today until a year with no fills: three windows.
-    assert_eq!(h.reads(CLAIMS).len(), 3);
     // Only Alex's claims were read.
     assert!(h.reads(CLAIMS).iter().all(|s| s.body["data"]["personCode"] == "001"));
 }
@@ -507,8 +512,9 @@ fn an_export_to_a_folder_prints_its_summary() {
 }
 
 #[test]
-fn a_session_refused_partway_ends_the_stream_incomplete() {
+fn a_session_refused_partway_keeps_the_years_read_before_it() {
     let h = Household::new();
+    // The second year's claims: the first year's three fills are read.
     h.server.fault(Fault {
         experience: CLAIMS,
         nth: Some(1),
@@ -523,11 +529,74 @@ fn a_session_refused_partway_ends_the_stream_incomplete() {
     assert_eq!(trailer["complete"], false);
     assert_eq!(trailer["error"]["exit_code"], 3);
     assert!(trailer["error"]["message"].as_str().unwrap().contains("HTTP 401"));
-    // Nothing but the header and the trailer: the fills are read before
-    // the stream's resources.
-    assert_eq!(lines.len(), 2);
+    assert_eq!(trailer["counts"]["MedicationDispense"], 3);
+    assert_eq!(trailer["counts"]["ExplanationOfBenefit"], 3);
+    let dates: Vec<&str> = of_type(&lines, "MedicationDispense")
+        .iter()
+        .map(|d| d["whenHandedOver"].as_str().unwrap())
+        .collect();
+    assert_eq!(dates, ["2026-10-01", "2026-09-01", "2026-08-15"]);
+    // No year after the refusal is asked for.
+    assert_eq!(h.reads(CLAIMS).len(), 2);
     // An incomplete export writes no rotated cookie back.
     assert_eq!(h.stored().cookie_header.expose(), COOKIES);
+}
+
+#[test]
+fn a_refusal_before_the_first_fill_ends_an_empty_stream_incomplete() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: FINANCIAL,
+        nth: Some(0),
+        status: 503,
+        content_type: JSON,
+        body: "{}".into(),
+    });
+    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    assert_eq!(code, 5);
+    let trailer = lines.last().unwrap();
+    assert_eq!(trailer["complete"], false);
+    assert_eq!(trailer["counts"]["MedicationDispense"], Value::Null);
+    // The person and the plan are still written: they were read.
+    assert_eq!(trailer["counts"]["Patient"], 1);
+}
+
+#[test]
+fn a_fill_only_the_financial_summary_lists_is_a_skip() {
+    let h = Household::new();
+    let (code, lines) = h.stream(&["records", "export", "--patient", "Sam", "--ndjson"]);
+    assert_eq!(code, 0);
+    let trailer = lines.last().unwrap();
+    assert_eq!(trailer["complete"], true);
+    assert!(of_type(&lines, "MedicationDispense").is_empty());
+    let skipped = trailer["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert_eq!(skipped[0]["code"], "unmatched");
+    assert_eq!(skipped[0]["resource_type"], "MedicationDispense");
+    assert!(skipped[0]["reason"].as_str().unwrap().starts_with("1 fill "));
+    // Alex's fills all match a claim.
+    let (_, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    assert!(lines
+        .last()
+        .unwrap()
+        .get("skipped")
+        .is_none_or(|s| s.as_array().unwrap().is_empty()));
+}
+
+#[test]
+fn costs_print_a_table_and_the_totals() {
+    let h = Household::new();
+    let (code, out) = h.run(&["costs", "--since", "2025-01-01", "--patient", "Alex"]).unwrap();
+    assert_eq!(code, 0);
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.lines().next().unwrap().starts_with("FILLED | "), "{text}");
+    assert_eq!(text.lines().filter(|l| l.starts_with("20")).count(), 4, "{text}");
+    assert!(
+        text.trim_end().ends_with(
+            "Over 3 fills (reversed claims left out): total $115.00, plan paid $65.00, you paid $50.00, deductible $35.00, discounts $3.00"
+        ),
+        "{text}"
+    );
 }
 
 #[test]
@@ -608,7 +677,6 @@ fn the_patient_is_picked_or_refused_before_the_fills_are_read() {
 fn arguments_are_checked_before_the_site_is_read() {
     let h = Household::new();
     for args in [
-        &["records", "export", "--patient", "Alex"][..],
         &["records", "export", "--patient", "Alex", "--ndjson", "--json"][..],
         &[
             "records",

@@ -65,9 +65,12 @@ pub fn date(raw: &str) -> Option<String> {
             .then(|| format!("{y:04}-{m:02}-{d:02}"))
     };
     let digits = |p: &str, n: usize| p.len() == n && p.bytes().all(|b| b.is_ascii_digit());
-    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+    let b = s.as_bytes();
+    // Sliced only where the bytes are ASCII, so a slice is always on a
+    // character boundary.
+    if b.len() >= 10 && b[..10].is_ascii() && b[4] == b'-' && b[7] == b'-' {
         let (y, m, d) = (&s[0..4], &s[5..7], &s[8..10]);
-        if digits(y, 4) && digits(m, 2) && digits(d, 2) && (s.len() == 10 || matches!(s.as_bytes()[10], b'T' | b' ')) {
+        if digits(y, 4) && digits(m, 2) && digits(d, 2) && (b.len() == 10 || matches!(b[10], b'T' | b' ')) {
             return ok(y, m, d);
         }
         return None;
@@ -382,6 +385,16 @@ pub fn financial(answer: &Value) -> Vec<CostedFill> {
     out
 }
 
+/// A prescription number as both reads compare it: without leading zeros.
+fn rx_key(rx: &str) -> &str {
+    let t = rx.trim().trim_start_matches('0');
+    if t.is_empty() {
+        "0"
+    } else {
+        t
+    }
+}
+
 /// Whether a costed fill is `fill`: the same day and the same drug (by
 /// NDC, else by name), and the same prescription number when both have
 /// one.
@@ -390,7 +403,7 @@ fn same_fill(fill: &Fill, c: &CostedFill) -> bool {
         return false;
     }
     if let (Some(a), Some(b)) = (&fill.rx_number, &c.rx_number) {
-        return a == b;
+        return rx_key(a) == rx_key(b);
     }
     match (&fill.drug.ndc, &c.drug.ndc) {
         (Some(a), Some(b)) => a == b,
@@ -399,9 +412,11 @@ fn same_fill(fill: &Fill, c: &CostedFill) -> bool {
 }
 
 /// `fills` with the amounts the financial summary gave them, field by
-/// field where the claim gave none. Each costed fill is used once. The
-/// costed fills no claim matched come back too, as fills of their own.
-pub fn add_costs(fills: &mut Vec<Fill>, person: &Person, costed: &[CostedFill]) {
+/// field where the claim gave none. Each costed fill is used once. Returns
+/// how many of `person`'s costed fills matched no claim: they are left
+/// out, never made fills of their own, so a dispense the two reads write
+/// differently never becomes two records under two ids.
+pub fn add_costs(fills: &mut [Fill], person: &Person, costed: &[CostedFill]) -> usize {
     let mut used = vec![false; costed.len()];
     for fill in fills.iter_mut() {
         let Some(i) = costed
@@ -425,39 +440,11 @@ pub fn add_costs(fills: &mut Vec<Fill>, person: &Person, costed: &[CostedFill]) 
             fill.pharmacy.name = costed[i].pharmacy.clone();
         }
     }
-    for (i, c) in costed.iter().enumerate() {
-        if used[i] || c.person != person.key {
-            continue;
-        }
-        fills.push(Fill {
-            id: fill_id(
-                &person.id,
-                None,
-                c.rx_number.as_deref(),
-                None,
-                c.filled.as_deref(),
-                &c.drug.key(),
-            ),
-            patient: person.id.clone(),
-            rx_number: c.rx_number.clone(),
-            fill_number: None,
-            refills_authorized: None,
-            claim_number: None,
-            drug: c.drug.clone(),
-            quantity: c.quantity.clone(),
-            quantity_unit: None,
-            days_supply: None,
-            filled: c.filled.clone(),
-            pharmacy: Party {
-                name: c.pharmacy.clone(),
-                ..Party::default()
-            },
-            prescriber: Party::default(),
-            dosage: None,
-            reversed: false,
-            amounts: c.amounts,
-        });
-    }
+    costed
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| !used[*i] && c.person == person.key)
+        .count()
 }
 
 #[cfg(test)]
@@ -472,7 +459,17 @@ mod tests {
         assert_eq!(date("1/5/2026").as_deref(), Some("2026-01-05"));
         // Eight digits, built so no eight-digit run sits in the source.
         assert_eq!(date(&["2026", "0115"].concat()).as_deref(), Some("2026-01-15"));
-        for bad in ["", "2026-13-01", "2026-1-5", "Jan 5 2026", "15/15/2026", "2026-01-15x"] {
+        for bad in [
+            "",
+            "2026-13-01",
+            "2026-1-5",
+            "Jan 5 2026",
+            "15/15/2026",
+            "2026-01-15x",
+            "2026-01-1é",
+            "2026-01-é1",
+            "é/1/2026",
+        ] {
             assert_eq!(date(bad), None, "{bad}");
         }
     }
@@ -486,6 +483,82 @@ mod tests {
         assert_eq!(whole(&v, &["a.z"]), Some(2));
         assert_eq!(whole(&v, &["a.f"]), None);
         assert_eq!(amount(&v, &["a.f"]), Some(Cents(250)));
+    }
+
+    #[test]
+    fn costs_join_the_claim_of_the_same_day_drug_and_number() {
+        let person = Person {
+            id: "p0".into(),
+            key: "001".into(),
+            first_name: None,
+            last_name: None,
+            birth_date: None,
+            role: None,
+            member_id: None,
+            signed_in: true,
+        };
+        let drug = Drug {
+            name: "EXAMPLEPRIL".into(),
+            ndc: Some("00000000001".into()),
+            ..Drug::default()
+        };
+        let fill = |rx: &str, day: &str| Fill {
+            id: format!("rx-{rx}-{day}"),
+            patient: "p0".into(),
+            rx_number: Some(rx.into()),
+            fill_number: None,
+            refills_authorized: None,
+            claim_number: None,
+            drug: drug.clone(),
+            quantity: None,
+            quantity_unit: None,
+            days_supply: None,
+            filled: Some(day.into()),
+            pharmacy: Party::default(),
+            prescriber: Party::default(),
+            dosage: None,
+            reversed: false,
+            amounts: Amounts::default(),
+        };
+        let costed = |who: &str, rx: Option<&str>, day: &str, paid: i64| CostedFill {
+            person: who.into(),
+            drug: drug.clone(),
+            filled: Some(day.into()),
+            pharmacy: Some("Example Pharmacy".into()),
+            quantity: None,
+            rx_number: rx.map(str::to_string),
+            amounts: Amounts {
+                patient_paid: Some(Cents(paid)),
+                ..Amounts::default()
+            },
+        };
+        let mut fills = vec![fill("0000001", "2026-10-01"), fill("0000002", "2026-09-01")];
+        let left = add_costs(
+            &mut fills,
+            &person,
+            &[
+                // The same number without its leading zeros.
+                costed("001", Some("1"), "2026-10-01", 1000),
+                // No number: the day and the NDC decide.
+                costed("001", None, "2026-09-01", 500),
+                // Another day: matches nothing, counted.
+                costed("001", Some("1"), "2026-08-01", 700),
+                // Another person's: neither used nor counted.
+                costed("002", None, "2026-09-01", 900),
+            ],
+        );
+        assert_eq!(fills[0].amounts.patient_paid, Some(Cents(1000)));
+        assert_eq!(fills[0].pharmacy.name.as_deref(), Some("Example Pharmacy"));
+        assert_eq!(fills[1].amounts.patient_paid, Some(Cents(500)));
+        assert_eq!(left, 1);
+        assert_eq!(fills.len(), 2);
+        // A different number on the same day is a different fill.
+        let mut other = vec![fill("0000003", "2026-10-01")];
+        assert_eq!(
+            add_costs(&mut other, &person, &[costed("001", Some("1"), "2026-10-01", 1)]),
+            1
+        );
+        assert!(other[0].amounts.is_empty());
     }
 
     #[test]

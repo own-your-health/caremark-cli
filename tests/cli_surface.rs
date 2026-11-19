@@ -428,7 +428,6 @@ fn api_requests_are_checked_first() {
 #[test]
 fn record_commands_check_their_arguments_first() {
     for args in [
-        vec!["records", "export"],
         // --json is added below: with --ndjson it is a usage error.
         vec!["records", "export", "--ndjson"],
         vec!["records", "export", "--since", "2026-02-30", "--ndjson"],
@@ -444,7 +443,13 @@ fn record_commands_check_their_arguments_first() {
         let e = error_of(&out);
         assert!(!e.to_string().contains("profiles add"), "{args:?}: {e}");
     }
-    // clap's own refusal: one destination.
+    // clap's own refusals: no destination, and two.
+    caremark()
+        .env("XDG_CONFIG_HOME", tmp())
+        .args(["records", "export"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--ndjson"));
     caremark()
         .args(["records", "export", "--ndjson", "-o", "/tmp/x"])
         .assert()

@@ -88,7 +88,7 @@ member; `docs/api.md` § Route), accepting the risk under its Terms of Use
   --overwrite`), the edge's 403 page, 429 and 5xx are 5. A `Set-Cookie`
   updates the jar, written back once the command has succeeded, unless a
   newer sign-in replaced the stored session meanwhile
-  (`app::write_back`).
+  (`site_cmd::write_back`). An export that ends incomplete writes none.
 - **Mapping.** `auth login --browser --log-requests <SECONDS>` prints the
   endpoints the site's pages called, ids hidden except the experience ids,
   which are the site's constants. `caremark api POST <experience> --data
@@ -112,8 +112,9 @@ Unit and in-process tests use `Vault::new(MemoryKeys::new(), dir)`.
   `XDG_CONFIG_HOME`.
 - `tests/site_e2e.rs`: every site command in-process against a loopback
   server answering with `tests/fixtures/site/`, the session in an in-memory
-  vault: the windows, the stream, the refusals as exit codes, the cookie
-  write-back.
+  vault: the windows, the stream, a stream cut short keeping the years
+  read before it, the financial summary's unmatched fills as a skip, the
+  refusals as exit codes, the cookie write-back, the human tables.
 - `tests/no_personal_data.rs`.
 - Unit tests beside the code: the capture, the session check against a
   loopback server, `api_request`, `refuse`, the cookie jar.

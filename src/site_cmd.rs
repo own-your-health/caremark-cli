@@ -16,7 +16,7 @@ use pk_cli_core::{dates, output, CliError, Money, Paged, RangeArgs};
 use pk_med_records::dto::{kind, method, relationship};
 use pk_med_records::{
     create_export_file, Finished, Header, Organization, PatientContext, RawResource, RecordsExport, RecordsWriter,
-    Source,
+    Skip, Source,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -31,8 +31,9 @@ use crate::portal::{self, CostedFill};
 use crate::session::SessionStore;
 use crate::site::SiteKeys;
 
-/// How many years back an export without `--since` reads at most. It stops
-/// earlier, at the first year in which no one on the account had a fill.
+/// How many years back an export without `--since` reads: every one, so a
+/// year with no fills never hides the years before it. The stream
+/// header's `since` says where it began.
 pub const MAX_YEARS: i64 = 10;
 
 /// Where the site commands keep sessions and what they read.
@@ -83,7 +84,35 @@ impl Ctx<'_> {
 
 fn put(out: &mut dyn Write, v: &Value) -> Result<(), CliError> {
     let text = serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
+    line(out, &text)
+}
+
+fn line(out: &mut dyn Write, text: &str) -> Result<(), CliError> {
     writeln!(out, "{text}").map_err(|e| CliError::Other(format!("writing the output: {e}")))
+}
+
+/// `rows` as a table, as `pk_cli_core::output::table` prints one, to `out`.
+fn table(out: &mut dyn Write, rows: &[Value]) -> Result<(), CliError> {
+    let mut cols: Vec<String> = Vec::new();
+    for row in rows {
+        for k in row.as_object().into_iter().flat_map(|m| m.keys()) {
+            if !cols.contains(k) {
+                cols.push(k.clone());
+            }
+        }
+    }
+    line(
+        out,
+        &cols.iter().map(|c| c.to_uppercase()).collect::<Vec<_>>().join(" | "),
+    )?;
+    for row in rows {
+        let cells: Vec<String> = cols
+            .iter()
+            .map(|c| row.get(c).map(output::scalar).unwrap_or_default())
+            .collect();
+        line(out, &cells.join(" | "))?;
+    }
+    Ok(())
 }
 
 /// The checks a command's arguments get before the session is read: a
@@ -95,11 +124,6 @@ pub fn check_args(cli: &Cli) -> Result<(), CliError> {
         Command::Records(RecordsCmd::Export(args)) => {
             if args.ndjson && cli.common.json {
                 return Err(CliError::Usage("--ndjson is the output; drop --json".into()));
-            }
-            if !args.ndjson && args.output.is_none() {
-                return Err(CliError::Usage(format!(
-                    "say where the records go: --ndjson for stdout (`| medrec import --from {BIN}`) or -o <DIR>"
-                )));
             }
             args.since.as_deref().map(iso).transpose()?;
             Ok(())
@@ -247,6 +271,9 @@ struct Window {
 /// The windows from `until` back, a year each (sharing their boundary day,
 /// which the fills' ids dedupe): down to `since`, or [`MAX_YEARS`] back.
 fn windows(since: Option<&str>, until: &str) -> Vec<Window> {
+    if since.is_some_and(|s| s > until) {
+        return Vec::new();
+    }
     let (y, m, d) = dates::parse_iso(until).expect("an ISO date");
     let mut out = Vec::new();
     for back in 0..MAX_YEARS {
@@ -301,36 +328,85 @@ fn claims(ctx: &Ctx, person: &Person, w: &Window) -> Result<Vec<Fill>, CliError>
     Ok(portal::claims(&answer, person))
 }
 
-/// `who`'s fills from `since` (or as far back as the account has fills)
-/// to `until`, newest first, each once. A fill with no date is kept only
-/// without `since`.
-fn fills(ctx: &Ctx, who: &[&Person], since: Option<&str>, until: Option<&str>) -> Result<Vec<Fill>, CliError> {
+/// The trailer's skip code for fills only the financial summary lists
+/// (`Skip.code` is an open set).
+const UNMATCHED: &str = "unmatched";
+
+/// What a pull read: the fills, newest first and each once; how many of
+/// the financial summary's fills matched no claim (left out, so one
+/// dispense never becomes two records); and the error that cut it short,
+/// with the fills of the windows read before it.
+struct Pull {
+    fills: Vec<Fill>,
+    unmatched: usize,
+    error: Option<CliError>,
+}
+
+/// `who`'s fills from `since` to `until` (default today), a year at a
+/// time from `until` back.
+fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     let until = until.unwrap_or(&ctx.today).to_string();
     let mut seen = HashSet::new();
-    let mut all = Vec::new();
-    for w in windows(since, &until) {
-        let costed = financial(ctx, &w)?;
-        let mut any = costed.iter().any(|c| who.iter().any(|p| p.key == c.person));
+    let mut fills = Vec::new();
+    let mut unmatched = 0;
+    let mut error = None;
+    'windows: for w in windows(Some(since), &until) {
+        let costed = match financial(ctx, &w) {
+            Ok(c) => c,
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        };
         for p in who {
-            let mut found = claims(ctx, p, &w)?;
-            any |= !found.is_empty();
-            portal::add_costs(&mut found, p, &costed);
+            let mut found = match claims(ctx, p, &w) {
+                Ok(f) => f,
+                Err(e) => {
+                    error = Some(e);
+                    break 'windows;
+                }
+            };
+            unmatched += portal::add_costs(&mut found, p, &costed);
             for f in found {
                 if seen.insert(f.id.clone()) {
-                    all.push(f);
+                    fills.push(f);
                 }
             }
         }
-        if since.is_none() && !any {
-            break;
-        }
     }
-    all.retain(|f| match f.filled.as_deref() {
-        Some(d) => since.is_none_or(|s| d >= s) && d <= until.as_str(),
-        None => since.is_none(),
-    });
-    all.sort_by(|a, b| b.filled.cmp(&a.filled).then_with(|| a.id.cmp(&b.id)));
-    Ok(all)
+    fills.retain(|f| f.filled.as_deref().is_some_and(|d| d >= since && d <= until.as_str()));
+    fills.sort_by(|a, b| b.filled.cmp(&a.filled).then_with(|| a.id.cmp(&b.id)));
+    Pull {
+        fills,
+        unmatched,
+        error,
+    }
+}
+
+/// A list command's fills: the whole pull, or its error.
+fn fills(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Result<Vec<Fill>, CliError> {
+    let pull = pull(ctx, who, since, until);
+    if let Some(e) = pull.error {
+        return Err(e);
+    }
+    note_unmatched(ctx, pull.unmatched);
+    Ok(pull.fills)
+}
+
+fn note_unmatched(ctx: &Ctx, n: usize) {
+    if n > 0 {
+        ctx.note(&format!(
+            "{n} fill{} in the financial summary matched no claim and {} left out",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "is" } else { "are" }
+        ));
+    }
+}
+
+/// An export's `since` without `--since`: [`MAX_YEARS`] before today.
+fn oldest(ctx: &Ctx) -> String {
+    let (y, m, d) = dates::parse_iso(&ctx.today).expect("an ISO date");
+    shift((y - MAX_YEARS, m, d))
 }
 
 /// The prescriptions `fills` (newest first) are of: one per prescription
@@ -399,8 +475,7 @@ fn patients(ctx: &Ctx, out: &mut dyn Write) -> Result<(), CliError> {
         .iter()
         .map(|r| serde_json::to_value(r).unwrap_or_default())
         .collect();
-    output::table(&output::table_view(&items, PATIENT_COLUMNS));
-    Ok(())
+    table(out, &output::table_view(&items, PATIENT_COLUMNS))
 }
 
 // ------------------------------------------------------------------- rx
@@ -460,7 +535,7 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
     let since = list_since(ctx, since, until.as_deref());
     let everyone = people(ctx)?;
     let who = who(&everyone, args.patient.as_deref())?;
-    let fills = fills(ctx, &who, Some(&since), until.as_deref())?;
+    let fills = fills(ctx, &who, &since, until.as_deref())?;
     let mut rows: Vec<RxRow> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
     for f in fills.iter().filter(|f| !f.reversed) {
@@ -502,7 +577,7 @@ fn rx_list(ctx: &Ctx, args: &RxListArgs, out: &mut dyn Write) -> Result<(), CliE
     if items.is_empty() {
         ctx.note(&format!("no fills since {since}"));
     } else {
-        output::table(&output::table_view(&items, RX_COLUMNS));
+        table(out, &output::table_view(&items, RX_COLUMNS))?;
     }
     Ok(())
 }
@@ -560,7 +635,7 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
     let since = list_since(ctx, since, until.as_deref());
     let everyone = people(ctx)?;
     let who = who(&everyone, args.patient.as_deref())?;
-    let mut fills = fills(ctx, &who, Some(&since), until.as_deref())?;
+    let mut fills = fills(ctx, &who, &since, until.as_deref())?;
     if let Some(n) = args.range.limit {
         fills.truncate(n as usize);
     }
@@ -607,12 +682,21 @@ fn costs(ctx: &Ctx, args: &CostsArgs, out: &mut dyn Write) -> Result<(), CliErro
         ctx.note(&format!("no fills since {since}"));
         return Ok(());
     }
-    output::table(&output::table_view(&rows, COST_COLUMNS));
-    println!(
-        "\n{} fills: total {}, plan paid {}, you paid {}, deductible {}",
-        totals.fills, totals.total.amount, totals.plan_paid.amount, totals.you_paid.amount, totals.deductible.amount
-    );
-    Ok(())
+    table(out, &output::table_view(&rows, COST_COLUMNS))?;
+    let money = |m: &Money| output::scalar(&serde_json::to_value(m).unwrap_or_default());
+    line(
+        out,
+        &format!(
+            "\nOver {} fill{} (reversed claims left out): total {}, plan paid {}, you paid {}, deductible {}, discounts {}",
+            totals.fills,
+            if totals.fills == 1 { "" } else { "s" },
+            money(&totals.total),
+            money(&totals.plan_paid),
+            money(&totals.you_paid),
+            money(&totals.deductible),
+            money(&totals.discount)
+        ),
+    )
 }
 
 // -------------------------------------------------------------- records
@@ -628,8 +712,9 @@ pub fn organization() -> Organization {
     }
 }
 
-/// The stream's header for `person`.
-pub fn header(person: &Person, since: Option<&str>) -> Header {
+/// The stream's header for `person`: fills from `since` (`--since`, or
+/// [`MAX_YEARS`] back).
+pub fn header(person: &Person, since: &str) -> Header {
     let mut h = Header::new(
         Source::new(BIN, env!("CARGO_PKG_VERSION")),
         organization(),
@@ -637,37 +722,43 @@ pub fn header(person: &Person, since: Option<&str>) -> Header {
         now_rfc3339(),
     );
     h.method = Some(method::PORTAL.into());
-    if let Some(s) = since {
-        h.since = Some(s.into());
-        // Exported whatever the date: the payer, the person, the plan and
-        // the prescriptions the fills are of.
-        h.since_unbounded = vec![
-            "Coverage".into(),
-            "MedicationRequest".into(),
-            "Organization".into(),
-            "Patient".into(),
-        ];
-    }
+    h.since = Some(since.into());
+    // Exported whatever the date: the payer, the person, the plan and the
+    // prescriptions the fills are of.
+    h.since_unbounded = vec![
+        "Coverage".into(),
+        "MedicationRequest".into(),
+        "Organization".into(),
+        "Patient".into(),
+    ];
     h
 }
 
-/// The exit code of a stream that ended incomplete: its error's.
+/// The exit code of a stream that ended incomplete: its error's, else 5
+/// (the site's answers could not be read whole).
 fn incomplete_exit(finished: &Finished) -> i32 {
-    finished.trailer.error.as_ref().and_then(|e| e.exit_code).unwrap_or(1)
+    finished.trailer.error.as_ref().and_then(|e| e.exit_code).unwrap_or(5)
 }
 
 /// `records export`: one person's payer, Patient and Coverage, each
 /// prescription (MedicationRequest), then each fill as a
-/// MedicationDispense and its pharmacy ExplanationOfBenefit. The fills are
-/// read first: a read that fails before the stream starts is the
-/// command's error; one that fails after ends the stream incomplete, the
-/// error in its trailer.
+/// MedicationDispense and its pharmacy ExplanationOfBenefit. Reading the
+/// family is the command's error when it fails; the stream starts after
+/// it. A read of the fills that fails ends the stream incomplete with the
+/// fills of the years read before it, the error in its trailer.
 fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliError> {
-    let since = args.since.as_deref().map(iso).transpose()?;
-    let since = since.as_deref();
+    let since = match args.since.as_deref() {
+        Some(s) => iso(s)?,
+        None => oldest(ctx),
+    };
     let everyone = people(ctx)?;
     let person = pick(&everyone, args.patient.as_deref())?;
-    let read = fills(ctx, &[person], since, None);
+    let Pull {
+        fills,
+        unmatched,
+        error,
+    } = pull(ctx, &[person], &since, None);
+    note_unmatched(ctx, unmatched);
     let mut file = match &args.output {
         Some(dir) => Some(create_export_file(dir)?),
         None => None,
@@ -677,14 +768,13 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
             Some(f) => f.file(),
             None => out,
         };
-        let mut w = RecordsWriter::start(sink, &header(person, since))?;
-        let written = read.and_then(|fills| {
+        let mut w = RecordsWriter::start(sink, &header(person, &since))?;
+        let written = (|| -> Result<(), CliError> {
             let coverage = fhir::coverage_id(person);
             for r in [fhir::organization(), fhir::patient(person), fhir::coverage(person)] {
                 w.resource(&RawResource::from_value(&r)?)?;
             }
-            let rxs = prescriptions(&fills);
-            for rx in &rxs {
+            for rx in &prescriptions(&fills) {
                 w.resource(&RawResource::from_value(&fhir::medication_request(rx))?)?;
             }
             for f in &fills {
@@ -692,11 +782,23 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
                 w.resource(&RawResource::from_value(&fhir::medication_dispense(f, rx.as_deref()))?)?;
                 w.resource(&RawResource::from_value(&fhir::explanation_of_benefit(f, &coverage))?)?;
             }
+            if unmatched > 0 {
+                w.skip(Skip {
+                    resource_type: Some("MedicationDispense".into()),
+                    id: None,
+                    search: None,
+                    reason: format!(
+                        "{unmatched} fill{} the financial summary lists and no claim does, left out until the two reads can be matched",
+                        if unmatched == 1 { "" } else { "s" }
+                    ),
+                    code: UNMATCHED.into(),
+                });
+            }
             Ok(())
-        });
-        match written {
-            Ok(()) => w.finish(now_rfc3339(), None)?,
-            Err(e) => w.finish(now_rfc3339(), Some(&e))?,
+        })();
+        match written.err().or(error) {
+            None => w.finish(now_rfc3339(), None)?,
+            Some(e) => w.finish(now_rfc3339(), Some(&e))?,
         }
     };
     if let Some(file) = file {
@@ -749,5 +851,8 @@ mod tests {
         assert_eq!(windows(Some("2026-01-01"), "2026-11-19").len(), 1);
         assert_eq!(windows(None, "2026-11-19").len(), MAX_YEARS as usize);
         assert_eq!(windows(None, "2028-02-29")[0].start, "2027-02-28");
+        // A day after `until` reads nothing.
+        assert!(windows(Some("2026-11-20"), "2026-11-19").is_empty());
+        assert_eq!(windows(Some("2026-11-19"), "2026-11-19").len(), 1);
     }
 }

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use pk_cli_auth::LoginArgs;
 use pk_cli_browser::BrowserArgs;
@@ -213,19 +213,21 @@ pub enum RecordsCmd {
 }
 
 #[derive(Args, Debug)]
+#[command(group(ArgGroup::new("destination").required(true).args(["ndjson", "output"])))]
 pub struct ExportArgs {
     /// The person: an id from `caremark patients list`, or a first name.
     /// May be omitted when the account has one person.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
-    /// Only fills on or after this day (YYYY-MM-DD). Without it, every year
-    /// back to the first in which no one on the account had a fill (at most
-    /// 10).
+    /// Only fills on or after this day (YYYY-MM-DD); without it, the last
+    /// 10 years. An export always runs to today (health-records/v1 has no
+    /// --until): use `rx list` or `costs` for a closed range.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub since: Option<String>,
     /// Write the stream to stdout (`| medrec import --from caremark`). The
-    /// stream is the output, so --json with it is a usage error.
-    #[arg(long, conflicts_with = "output")]
+    /// stream is the output, so --json with it is a usage error. One of
+    /// --ndjson and -o is required.
+    #[arg(long)]
     pub ndjson: bool,
     /// Write the stream to DIR/records.ndjson instead
     /// (records.incomplete.ndjson when it ends incomplete), and print

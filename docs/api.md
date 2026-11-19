@@ -146,9 +146,17 @@ financial summary are read as the site's pages read them:
 
 The claim fields come from the claim-history and drug-cost pages' own
 code. Each read is a year (`claimStartDate`/`claimEndDate`,
-`startDate`/`endDate`), as the claims page asks for one. A claim's fill is
-matched to the financial summary's by the day and the drug, for the
-amounts a claim leaves out.
+`startDate`/`endDate`), as the claims page asks for one, from today back:
+to `--since`, or 10 years for an export without it. Every year is read,
+since a year with no fills says nothing of the years before it. Per year,
+the financial summary is one read and the claims one read per person.
+
+A claim's fill is matched to the financial summary's by the day and the
+drug, and the prescription number when both give one, for the amounts a
+claim leaves out. A financial-summary fill no claim matches is left out
+and counted (`docs/fhir.md`, Amounts). Until a signed-in answer confirms
+the two reads write a fill alike (the date as a calendar day, the
+prescription number's leading zeros), expect some to be counted.
 
 The same scripts hold experiences that write (refills, orders, carts,
 transfers, notification marks, reimbursement claims, prior-authorization

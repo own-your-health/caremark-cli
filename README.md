@@ -40,9 +40,14 @@ caremark --profile adult1 api POST member-family --data '{"data":{}}'
 `records export` writes one person's Patient, Coverage, prescriptions
 (MedicationRequest), fills (MedicationDispense) and pharmacy claims
 (ExplanationOfBenefit, CARIN's Pharmacy EOB); `docs/fhir.md` maps every
-field. Without `--since` it reads a year at a time back to the first year in
-which no one on the account had a fill (at most 10). `-o <DIR>` writes the
-stream to `<DIR>/records.ndjson` instead and prints `records-export/v1`.
+field. It reads a year at a time from today back to `--since`, or over the
+last 10 years without it, and always runs to today: `rx list` and `costs`
+take `--until` for a closed range. One of `--ndjson` (the stream on stdout)
+and `-o <DIR>` is required; `-o` writes the stream to
+`<DIR>/records.ndjson` and prints `records-export/v1`. A read that fails
+partway ends the stream incomplete (`"complete": false` in its trailer,
+`records.incomplete.ndjson` with `-o`) with the fills of the years read
+before it, and the command exits with the failure's code, 3 or 5.
 `rx list` and `costs` read the last year unless `--since` says otherwise,
 everyone's unless `--patient`.
 
@@ -75,7 +80,8 @@ Every command takes `--json` and prints one schema-tagged document.
 | `info` | `cli-info/v1`: profile `health-records/v1`; capabilities `login-profiles`, `patients`, `rx`, `costs`, `records`, `api`; `auth.required` true |
 
 Exit codes: 0 ok, 2 usage, 3 sign-in not finished or session refused, 4
-not found, 5 the member site's answer could not decide, 6 a destructive
+not found, 5 the member site's answer could not decide (an export's stream
+that ended incomplete exits 3 or 5, as its trailer's error), 6 a destructive
 command (`auth reset`, `profiles remove`) without a terminal to ask on and
 without `--force`.
 
