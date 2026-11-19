@@ -239,15 +239,28 @@ fn dummy_for(key: &str, s: &str) -> Option<bool> {
     let all_digits_dummy = |s: &str| s.bytes().all(|b| b.is_ascii_digit()) && is_dummy_number(s);
     let lower = key.to_ascii_lowercase();
     Some(match lower.as_str() {
-        "firstname" | "first_name" | "givenname" => PEOPLE.contains(&s.to_ascii_uppercase().as_str()),
-        "lastname" | "last_name" | "familyname" => s.eq_ignore_ascii_case("example"),
+        "firstname" | "first_name" | "givenname" | "prescriberfirstname" | "patientfirstname" => {
+            PEOPLE.contains(&s.to_ascii_uppercase().as_str())
+        }
+        "lastname" | "last_name" | "familyname" | "prescriberlastname" | "patientlastname" => {
+            s.eq_ignore_ascii_case("example")
+        }
         "membername" | "patientname" | "fullname" => is_dummy_name(s),
         "dob" | "dateofbirth" | "birthdate" => s.ends_with("-01-01") || s.starts_with("01/01/"),
         "memberid" | "subscriberid" | "cardholderid" | "personid" | "membershipid" => shaped(s, "SYNM", 6),
         "groupnumber" | "groupid" | "rxgroup" => shaped(s, "SYNG", 4),
-        "rxnumber" | "prescriptionnumber" | "claimnumber" | "claimid" => all_digits_dummy(s) || s.starts_with("SYN"),
+        "rxnumber"
+        | "prescriptionnumber"
+        | "claimnumber"
+        | "claimid"
+        | "rxclaimnumber"
+        | "id"
+        | "lookupid"
+        | "externalid"
+        | "familymemberinternalid" => all_digits_dummy(s) || s.starts_with("SYN"),
         "prescribername" | "doctorname" | "pharmacyname" | "groupname" => is_dummy_org(s) || is_dummy_name(s),
-        "npi" | "prescribernpi" | "pharmacynpi" | "ncpdp" | "pharmacyid" => all_digits_dummy(s),
+        "npi" | "prescribernpi" | "pharmacynpi" | "ncpdp" | "pharmacyid" | "nationalproviderid" | "pharmacynumber"
+        | "pharmacynpiid" => all_digits_dummy(s),
         "phone" | "phonenumber" | "pharmacyphone" | "prescriberphone" => {
             all_digits_dummy(&s.replace(['(', ')', '-', ' ', '.'], ""))
         }

@@ -133,6 +133,39 @@ The family-info answer the pages keep has
 `getPlanDetailsList.planDetailsList[]`; `personCode` is what
 `claim-history` takes.
 
+### What caremark reads in the answers
+
+`src/portal.rs` names every path. The family, the claims and the
+financial summary are read as the site's pages read them:
+
+| Read | Paths |
+| --- | --- |
+| `member-family` | `data.getPatientV2` (the signed-in member; its `id` alone keys every id caremark writes, hashed and never written out, and an answer without it is exit 5) and `data.getFamilyInfo.familyMemberList[]`: `personCode`, `firstName`, `lastName`, `dateOfBirth`, `relationship` (`CARDHOLDER`, `SPOUSE`, `CHILD`) |
+| `claim-history`, per person code and year | `data.getClaimV2.statusCode`; `memberClaimList[].claims[]`: `rxNumber`, `fillNumber`, `rxclaimNumber`, `claimStatus`, `fillDate`, `daysSupplyQuantity`, `dispensedQuantity`, `drug` (`name`, `formStrengthName`, `formName`, `ndcId`, `genericProductId`), `pharmacy` (`pharmacyName`, `pharmacyNPI`), `prescriber` (`prescriberFirstName`, `prescriberLastName`, `prescriberNPI`), the amounts |
+| `financial-summary`, per year | `data.getFinancialSummary.statusCode`; `patients[]`: `patient.personCode`, `linkedIDs[].prescriptionforPatient[]` with `drugInfo.drug` and `fills[]` (`dateTimeFilled`, `pharmacyName`, the amounts) |
+
+The claim fields come from the claim-history and drug-cost pages' own
+code. Each read is a year (`claimStartDate`/`claimEndDate`,
+`startDate`/`endDate`), as the claims page asks for one, from today back:
+to `--since` (30 years at most), or 10 years for an export without it.
+Every year is read, since a year with no fills says nothing of the years
+before it. Per year,
+the financial summary is one read and the claims one read per person.
+
+A claim's fill is matched to the financial summary's by the day and the
+drug, and the prescription number when both give one, for the amounts a
+claim leaves out. A financial-summary fill no claim matches is left out
+and counted (`docs/fhir.md`, Amounts). Until a signed-in answer confirms
+the two reads write a fill alike (the date as a calendar day, the
+prescription number's leading zeros), expect some to be counted.
+
+An answer whose list is not where the scripts read it reads as no claims,
+so caremark checks the two reads against each other. When the financial
+summary lists a person's fills and the claim history gave that person no
+claim in any year, the claim history's shape has changed: the export ends
+incomplete and `costs`/`rx list` fail, exit 5. When every claim read has no
+date caremark reads, the same.
+
 The same scripts hold experiences that write (refills, orders, carts,
 transfers, notification marks, reimbursement claims, prior-authorization
 requests, preferences). caremark lists none of them, and `caremark api`

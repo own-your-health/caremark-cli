@@ -348,6 +348,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1620,8 +1621,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-fhir"
-version = "0.6.2"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.2#99332503d2dce9f021141bfc86561124a6a5620e"
+version = "0.6.6"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.6#ffd8107f74ec930013c440db5bd2bd4ed1e77efe"
 dependencies = [
  "base64 0.22.1",
  "pk-cli-core",
@@ -1632,8 +1633,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-records"
-version = "0.6.2"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.2#99332503d2dce9f021141bfc86561124a6a5620e"
+version = "0.6.6"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.6#ffd8107f74ec930013c440db5bd2bd4ed1e77efe"
 dependencies = [
  "pk-cli-core",
  "pk-med-fhir",

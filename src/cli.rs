@@ -2,11 +2,11 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use pk_cli_auth::LoginArgs;
 use pk_cli_browser::BrowserArgs;
-use pk_cli_core::CommonArgs;
+use pk_cli_core::{CommonArgs, RangeArgs};
 use pk_cli_selfupdate::SelfUpdateArgs;
 
 pub const BIN: &str = "caremark";
@@ -45,6 +45,22 @@ pub enum Command {
     /// The member-site logins: one profile per account (profile-list/v1).
     #[command(subcommand)]
     Profiles(ProfilesCmd),
+    /// The people on the account: the signed-in member and the family the
+    /// site shows (patient-list/v1).
+    #[command(subcommand)]
+    Patients(PatientsCmd),
+    /// Prescriptions, each once with its latest fill (rx-list/v1).
+    #[command(subcommand)]
+    Rx(RxCmd),
+    /// Each fill and what it cost: the drug's total cost, what the plan
+    /// paid, what you paid and what went to the deductible, with their sums
+    /// over the whole range (cost-list/v1). --limit shortens the rows, not
+    /// the sums.
+    Costs(CostsArgs),
+    /// One person's fills and pharmacy claims as records-stream/v1, for
+    /// `medrec import --from caremark`.
+    #[command(subcommand)]
+    Records(RecordsCmd),
     /// One read of the member site as --profile <NAME>, printed as the JSON
     /// it answers: `GET <PATH>`, or `POST <PATH> --data <JSON>` to the
     /// site's experience API (a read the site sends as POST). Any other
@@ -147,10 +163,79 @@ pub struct LoginCmd {
     /// With --browser: print, on stderr, the endpoints the site's pages
     /// called on caremark.com while the window was open (method, path with
     /// ids hidden, status, content type; never a header, body or query),
-    /// and keep the window open this many seconds after the sign-in is
-    /// confirmed, so the pages can be used. For mapping the site.
+    /// and keep the window open at least this many seconds, so the pages
+    /// can be used. For mapping the site.
     #[arg(long, value_name = "SECONDS", hide = true)]
     pub log_requests: Option<u64>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PatientsCmd {
+    /// List the people (patient-list/v1).
+    #[command(visible_alias = "ls")]
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RxCmd {
+    /// Prescriptions filled in the range (default: the last year), newest
+    /// fill first (rx-list/v1).
+    #[command(visible_alias = "ls")]
+    List(RxListArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct RxListArgs {
+    /// Only this person: an id from `caremark patients list`, or a first
+    /// name. Default: everyone on the account.
+    #[arg(long, value_name = "ID")]
+    pub patient: Option<String>,
+    #[command(flatten)]
+    pub range: RangeArgs,
+}
+
+#[derive(Args, Debug)]
+pub struct CostsArgs {
+    /// Only this person: an id from `caremark patients list`, or a first
+    /// name. Default: everyone on the account.
+    #[arg(long, value_name = "ID")]
+    pub patient: Option<String>,
+    /// Fills in this range (default: the last year).
+    #[command(flatten)]
+    pub range: RangeArgs,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RecordsCmd {
+    /// One person's Patient, Coverage, prescriptions (MedicationRequest),
+    /// fills (MedicationDispense) and pharmacy claims
+    /// (ExplanationOfBenefit) as records-stream/v1.
+    Export(ExportArgs),
+}
+
+#[derive(Args, Debug)]
+#[command(group(ArgGroup::new("destination").required(true).args(["ndjson", "output"])))]
+pub struct ExportArgs {
+    /// The person: an id from `caremark patients list`, or a first name.
+    /// May be omitted when the account has one person.
+    #[arg(long, value_name = "ID")]
+    pub patient: Option<String>,
+    /// Only fills on or after this day (YYYY-MM-DD), at most 30 years back;
+    /// without it, the last 10 years. An export always runs to today
+    /// (health-records/v1 has no --until): use `rx list` or `costs` for a
+    /// closed range.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub since: Option<String>,
+    /// Write the stream to stdout (`| medrec import --from caremark`). The
+    /// stream is the output, so --json with it is a usage error. One of
+    /// --ndjson and -o is required.
+    #[arg(long)]
+    pub ndjson: bool,
+    /// Write the stream to DIR/records.ndjson instead
+    /// (records.incomplete.ndjson when it ends incomplete), and print
+    /// records-export/v1.
+    #[arg(short, long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]

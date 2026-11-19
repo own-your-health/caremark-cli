@@ -28,9 +28,29 @@ One profile per member account that signs in:
 caremark profiles add adult1
 caremark auth login --browser --profile adult1   # sign in in the Chrome window it opens
 
+caremark --profile adult1 patients list           # the people on the account, with their ids
+caremark --profile adult1 rx list                  # prescriptions filled in the last year
+caremark --profile adult1 costs --since 2026-01-01 # each fill's cost, and the sums
+caremark --profile adult1 records export --patient <ID> --ndjson | medrec import --from caremark
+
 # One read of the site, printed as the JSON it answers (docs/api.md lists them):
 caremark --profile adult1 api POST member-family --data '{"data":{}}'
 ```
+
+`records export` writes one person's Patient, Coverage, prescriptions
+(MedicationRequest), fills (MedicationDispense) and pharmacy claims
+(ExplanationOfBenefit, CARIN's Pharmacy EOB); `docs/fhir.md` maps every
+field. It reads a year at a time from today back to `--since` (at most 30
+years back, on every command), or over the last 10 years without it, and
+always runs to today: `rx list` and `costs`
+take `--until` for a closed range. One of `--ndjson` (the stream on stdout)
+and `-o <DIR>` is required; `-o` writes the stream to
+`<DIR>/records.ndjson` and prints `records-export/v1`. A read that fails
+partway ends the stream incomplete (`"complete": false` in its trailer,
+`records.incomplete.ndjson` with `-o`) with the fills of the years read
+before it, and the command exits with the failure's code, 3 or 5.
+`rx list` and `costs` read the last year unless `--since` says otherwise,
+everyone's unless `--patient`.
 
 `api` is read-only too: it sends a `GET`, the site's session check, or a
 `POST` to one of the experience reads caremark knows (by name, id or path),
@@ -50,14 +70,19 @@ Every command takes `--json` and prints one schema-tagged document.
 
 | Command | Output schema |
 | --- | --- |
+| `patients list` | `patient-list/v1` |
+| `rx list` | `rx-list/v1`, with `total` and `left_out` as `costs` |
+| `costs` | `cost-list/v1`: `items` (a `--limit` slice of `total` rows), `totals` over the range (fills not reversed): `fills`, `total_cost`, `plan_paid`, `you_paid`, `deductible`, `discount`, the names each item's amounts take, `left_out` (fills left out: `unmatched`, `undated`) |
+| `records export` | `records-stream/v1` (`--ndjson`), or `records-export/v1` (`-o`) |
 | `api` | the site's own JSON answer |
 | `auth login` / `status` / `logout` / `reset` | `auth-login/v1` / `auth-status/v1` / `auth-logout/v1` / `auth-reset/v1` |
 | `profiles list` / `add` / `remove` | `profile-list/v1` / `profile-add/v1` / `profile-remove/v1` |
 | `config path` / `show` | `config-path/v1` / `config/v1` |
-| `info` | `cli-info/v1`: profile `health-records/v1`; capability `login-profiles`; `auth.required` true |
+| `info` | `cli-info/v1`: profile `health-records/v1`; capabilities `profiles`, `patients`, `rx`, `costs`, `records`, `api`, `login-profiles`; `auth.required` true |
 
 Exit codes: 0 ok, 2 usage, 3 sign-in not finished or session refused, 4
-not found, 5 the member site's answer could not decide, 6 a destructive
+not found, 5 the member site's answer could not decide (an export's stream
+that ended incomplete exits 3 or 5, as its trailer's error), 6 a destructive
 command (`auth reset`, `profiles remove`) without a terminal to ask on and
 without `--force`.
 

@@ -85,6 +85,13 @@ fn every_command_renders_help() {
         vec!["config", "--help"],
         vec!["config", "path", "--help"],
         vec!["config", "show", "--help"],
+        vec!["patients", "--help"],
+        vec!["patients", "list", "--help"],
+        vec!["rx", "--help"],
+        vec!["rx", "list", "--help"],
+        vec!["costs", "--help"],
+        vec!["records", "--help"],
+        vec!["records", "export", "--help"],
         vec!["api", "--help"],
         vec!["self-update", "--help"],
         vec!["completions", "--help"],
@@ -127,7 +134,9 @@ fn info_declares_the_profile_and_the_browser_sign_in() {
     // capabilities (medical-common DESIGN.md §1.1).
     let capabilities = v["capabilities"].as_array().unwrap();
     assert!(capabilities.contains(&serde_json::json!("login-profiles")), "{v}");
-    assert!(capabilities.contains(&serde_json::json!("api")), "{v}");
+    for c in ["api", "patients", "rx", "costs", "records"] {
+        assert!(capabilities.contains(&serde_json::json!(c)), "{c}: {v}");
+    }
     assert!(!capabilities.contains(&serde_json::json!("records-files")), "{v}");
     assert_eq!(v["auth"]["required"], true);
     assert_eq!(v["auth"]["method"], "browser-session");
@@ -412,6 +421,85 @@ fn api_requests_are_checked_first() {
     assert!(error_of(&out)
         .to_string()
         .contains("auth login --browser --profile adult1"));
+}
+
+/// The record commands check their arguments before the profile, the vault
+/// or the site; then they need a configured profile, then a stored session.
+#[test]
+fn record_commands_check_their_arguments_first() {
+    for (args, names) in [
+        (vec!["records", "export", "--ndjson", "--json"], "--ndjson"),
+        (
+            vec!["costs", "--since", "2026-02-02", "--until", "2026-02-01", "--json"],
+            "2026-02",
+        ),
+        (vec!["rx", "list", "--until", "soon", "--json"], "soon"),
+        (vec!["costs", "--since", "2026-04-31", "--json"], "2026-04-31"),
+    ] {
+        let out = caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
+        let e = error_of(&out).to_string();
+        assert!(!e.contains("profiles add") && e.contains(names), "{args:?}: {e}");
+    }
+    // An export's own errors, on stderr: --ndjson takes stdout, so no --json.
+    for (args, names) in [
+        (
+            vec!["records", "export", "--since", "2026-02-30", "--ndjson"],
+            "that month has 28 days",
+        ),
+        (
+            vec![
+                "records",
+                "export",
+                "--since",
+                "2028-02-30",
+                "-o",
+                "target/never-written",
+            ],
+            "that month has 29 days",
+        ),
+    ] {
+        let out = caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(!err.contains("profiles add") && err.contains(names), "{args:?}: {err}");
+    }
+    // clap's own refusals: no destination, and two.
+    caremark()
+        .env("XDG_CONFIG_HOME", tmp())
+        .args(["records", "export"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--ndjson"));
+    caremark()
+        .args(["records", "export", "--ndjson", "-o", "/tmp/x"])
+        .assert()
+        .code(2);
+    for args in [
+        vec!["patients", "list"],
+        vec!["rx", "list"],
+        vec!["costs"],
+        vec!["records", "export", "-o", "target/never-written"],
+    ] {
+        // No profile: exit 2 naming `profiles add`.
+        let out = caremark()
+            .env("XDG_CONFIG_HOME", tmp())
+            .args(&args)
+            .arg("--json")
+            .assert()
+            .code(2);
+        assert!(error_of(&out).to_string().contains("profiles add"), "{args:?}");
+        // A profile with no session: exit 3 naming the sign-in.
+        let out = caremark()
+            .args(&args)
+            .args(["--profile", "adult1", "--json"])
+            .assert()
+            .code(3);
+        assert!(
+            error_of(&out)
+                .to_string()
+                .contains("auth login --browser --profile adult1"),
+            "{args:?}"
+        );
+    }
 }
 
 /// The commands that need no sign-in take no --profile; CAREMARK_PROFILE in
