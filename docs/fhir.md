@@ -44,7 +44,7 @@ same on every pull, so a re-export replaces rather than duplicates.
 | | `status`: `completed`, or `cancelled` for a reversed claim | `claimStatus` |
 | | `medicationCodeableConcept`: RxNorm when known, then the NDC (11 digits, `http://hl7.org/fhir/sid/ndc`), then the GPI; `text` the site's label | `drug.ndcId`, `drug.genericProductId`, `drug.name` + `formStrengthName` + `formName` |
 | | `performer[0].actor`: the pharmacy's name, with its NPI (or NCPDP id) | `pharmacy` |
-| | `authorizingPrescription`: the MedicationRequest | |
+| | `authorizingPrescription`: the MedicationRequest; for a fill with a prescriber and no prescription number, a contained MedicationRequest `#rx` whose `requester` is the prescriber (medical-common DESIGN.md §2.1) | |
 | | `type`: v3-ActCode `FF` (first fill) or `RF` (refill) | `fillNumber` 0 or more |
 | | `quantity`, `daysSupply` (UCUM `d`) | `dispensedQuantity`, `daysSupplyQuantity` |
 | | `dosageInstruction[0].text`: the directions on the label, left out when the site gives none | `sig`, `directions` or `dosageInstructions` (names from the site's scripts, unconfirmed) |

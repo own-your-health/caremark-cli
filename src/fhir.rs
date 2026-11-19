@@ -262,8 +262,26 @@ pub fn medication_dispense(f: &Fill, prescription: Option<&str>) -> Value {
     if !f.pharmacy.is_empty() {
         v["performer"] = json!([{ "actor": party(&f.pharmacy) }]);
     }
-    if let Some(id) = prescription {
-        v["authorizingPrescription"] = json!([{ "reference": format!("MedicationRequest/{id}") }]);
+    match prescription {
+        Some(id) => {
+            v["authorizingPrescription"] = json!([{ "reference": format!("MedicationRequest/{id}") }]);
+        }
+        // A prescriber named without a prescription number of its own: the
+        // requester of a contained MedicationRequest (medical-common
+        // DESIGN.md §2.1), so the fill keeps who prescribed it.
+        None if !f.prescriber.is_empty() => {
+            v["contained"] = json!([{
+                "resourceType": "MedicationRequest",
+                "id": "rx",
+                "status": "unknown",
+                "intent": "order",
+                "medicationCodeableConcept": medication(&f.drug),
+                "subject": patient_ref(&f.patient),
+                "requester": party(&f.prescriber),
+            }]);
+            v["authorizingPrescription"] = json!([{ "reference": "#rx" }]);
+        }
+        None => {}
     }
     if let Some(n) = f.fill_number {
         let (code, display) = if n == 0 { ("FF", "First Fill") } else { ("RF", "Refill") };
@@ -477,6 +495,35 @@ mod tests {
         );
         assert_eq!(d["meta"]["source"], META_SOURCE);
         assert!(d.get("dosageInstruction").is_none());
+    }
+
+    #[test]
+    fn a_prescriber_without_a_prescription_is_contained() {
+        let mut f = fill();
+        f.rx_number = None;
+        f.prescriber = Party {
+            name: Some("Dr. Example".into()),
+            npi: Some("0000000002".into()),
+            ..Party::default()
+        };
+        let d = medication_dispense(&f, None);
+        assert_eq!(d["authorizingPrescription"][0]["reference"], "#rx");
+        assert_eq!(d["contained"][0]["requester"]["display"], "Dr. Example");
+        let rx = &d["contained"][0];
+        assert_eq!(rx["resourceType"], "MedicationRequest");
+        assert_eq!(rx["id"], "rx");
+        assert_eq!(rx["intent"], "order");
+        assert_eq!(rx["requester"], party(&f.prescriber));
+        assert_eq!(rx["medicationCodeableConcept"], d["medicationCodeableConcept"]);
+        assert_eq!(rx["subject"], d["subject"]);
+        // With a prescription of its own the fill names it, and contains
+        // nothing.
+        let named = medication_dispense(&fill(), Some("mr0"));
+        assert!(named.get("contained").is_none());
+        // With neither, nothing.
+        f.prescriber = Party::default();
+        let bare = medication_dispense(&f, None);
+        assert!(bare.get("contained").is_none() && bare.get("authorizingPrescription").is_none());
     }
 
     #[test]
