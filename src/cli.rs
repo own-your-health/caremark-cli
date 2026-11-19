@@ -219,9 +219,10 @@ pub struct ExportArgs {
     /// May be omitted when the account has one person.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
-    /// Only fills on or after this day (YYYY-MM-DD); without it, the last
-    /// 10 years. An export always runs to today (health-records/v1 has no
-    /// --until): use `rx list` or `costs` for a closed range.
+    /// Only fills on or after this day (YYYY-MM-DD), at most 30 years back;
+    /// without it, the last 10 years. An export always runs to today
+    /// (health-records/v1 has no --until): use `rx list` or `costs` for a
+    /// closed range.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub since: Option<String>,
     /// Write the stream to stdout (`| medrec import --from caremark`). The

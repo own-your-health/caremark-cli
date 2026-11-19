@@ -67,6 +67,11 @@ differently, and a second id for one dispense would stay in medrec. The
 trailer counts them in one skip, code `unmatched`, resource type
 `MedicationDispense`, and `costs` and `rx list` say so on stderr.
 
+A claim with no date caremark reads is left out too, since no `--since`
+can hold it, and counted in a skip with code `undated`. When every claim
+read is undated, the answer's shape has changed rather than the account:
+the export ends incomplete and `costs` and `rx list` fail, exit 5.
+
 ## What medrec reads
 
 medrec (piekstra/medrec-cli#17) reads a `MedicationDispense`'s

@@ -147,8 +147,9 @@ financial summary are read as the site's pages read them:
 The claim fields come from the claim-history and drug-cost pages' own
 code. Each read is a year (`claimStartDate`/`claimEndDate`,
 `startDate`/`endDate`), as the claims page asks for one, from today back:
-to `--since`, or 10 years for an export without it. Every year is read,
-since a year with no fills says nothing of the years before it. Per year,
+to `--since` (30 years at most), or 10 years for an export without it.
+Every year is read, since a year with no fills says nothing of the years
+before it. Per year,
 the financial summary is one read and the claims one read per person.
 
 A claim's fill is matched to the financial summary's by the day and the

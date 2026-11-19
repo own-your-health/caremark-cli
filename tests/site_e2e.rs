@@ -583,6 +583,114 @@ fn a_fill_only_the_financial_summary_lists_is_a_skip() {
         .is_none_or(|s| s.as_array().unwrap().is_empty()));
 }
 
+/// A claim-history answer of Alex's: one claim on `dated` (if any) and one
+/// whose date of service is missing.
+fn claims_with_an_undated_one(dated: Option<&str>) -> String {
+    let claim = |number: &str, date: Option<&str>| {
+        let mut c = json!({
+            "rxNumber": "0000009",
+            "fillNumber": 0,
+            "rxclaimNumber": number,
+            "claimStatus": "PAID",
+            "drug": { "name": "EXAMPLEPRIL", "ndcId": "00000-0000-01" },
+        });
+        if let Some(d) = date {
+            c["fillDate"] = json!(d);
+        }
+        c
+    };
+    let mut claims = vec![claim("4444444444", None)];
+    if let Some(d) = dated {
+        claims.push(claim("5555555555", Some(d)));
+    }
+    json!({ "data": { "getClaimV2": {
+        "statusCode": "0000",
+        "memberClaimList": [{ "personCode": "001", "claims": claims }],
+    }}})
+    .to_string()
+}
+
+#[test]
+fn an_undated_claim_is_a_skip() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: Some(0),
+        status: 200,
+        content_type: JSON,
+        body: claims_with_an_undated_one(Some("2026-10-05")),
+    });
+    let (code, lines) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--ndjson",
+        "--since",
+        "2026-01-01",
+    ]);
+    assert_eq!(code, 0);
+    let trailer = lines.last().unwrap();
+    assert_eq!(trailer["complete"], true);
+    assert_eq!(trailer["counts"]["MedicationDispense"], 1);
+    // The override replaced Alex's claims, so the financial summary's two
+    // fills of them match nothing: an `unmatched` skip beside this one.
+    let skipped = trailer["skipped"].as_array().unwrap();
+    let undated: Vec<&Value> = skipped.iter().filter(|k| k["code"] == "undated").collect();
+    assert_eq!(undated.len(), 1, "{skipped:?}");
+    assert_eq!(undated[0]["resource_type"], "MedicationDispense");
+    assert!(undated[0]["reason"].as_str().unwrap().starts_with("1 fill "));
+}
+
+#[test]
+fn claims_that_are_all_undated_are_the_sites_failure() {
+    let h = Household::new();
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: claims_with_an_undated_one(None),
+    });
+    let (code, lines) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--ndjson",
+        "--since",
+        "2026-01-01",
+    ]);
+    assert_eq!(code, 5);
+    let trailer = lines.last().unwrap();
+    assert_eq!(trailer["complete"], false);
+    assert!(
+        trailer["error"]["message"].as_str().unwrap().contains("carry no date"),
+        "{trailer}"
+    );
+    let e = h.run(&["costs", "--patient", "Alex"]).unwrap_err();
+    assert_eq!(e.exit_code(), 5);
+}
+
+#[test]
+fn a_since_further_back_than_ten_years_is_read_to() {
+    let h = Household::new();
+    let (code, lines) = h.stream(&[
+        "records",
+        "export",
+        "--patient",
+        "Alex",
+        "--ndjson",
+        "--since",
+        "2014-01-01",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(lines[0]["since"], "2014-01-01");
+    let claims = h.reads(CLAIMS);
+    assert_eq!(claims.len(), 13);
+    assert_eq!(claims.last().unwrap().body["data"]["claimStartDate"], "2014-01-01");
+}
+
 #[test]
 fn costs_print_a_table_and_the_totals() {
     let h = Household::new();
@@ -689,6 +797,17 @@ fn arguments_are_checked_before_the_site_is_read() {
         ][..],
         &["costs", "--since", "2026-02-01", "--until", "2026-01-01"][..],
         &["rx", "list", "--since", "yesterday"][..],
+        // Every year to --since is read: a far-off one is refused.
+        &[
+            "records",
+            "export",
+            "--patient",
+            "Alex",
+            "--since",
+            "1990-01-01",
+            "--ndjson",
+        ][..],
+        &["costs", "--since", "1960-01-01"][..],
         &[
             "api",
             "POST",

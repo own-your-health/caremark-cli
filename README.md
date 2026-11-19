@@ -40,8 +40,9 @@ caremark --profile adult1 api POST member-family --data '{"data":{}}'
 `records export` writes one person's Patient, Coverage, prescriptions
 (MedicationRequest), fills (MedicationDispense) and pharmacy claims
 (ExplanationOfBenefit, CARIN's Pharmacy EOB); `docs/fhir.md` maps every
-field. It reads a year at a time from today back to `--since`, or over the
-last 10 years without it, and always runs to today: `rx list` and `costs`
+field. It reads a year at a time from today back to `--since` (at most 30
+years back, on every command), or over the last 10 years without it, and
+always runs to today: `rx list` and `costs`
 take `--until` for a closed range. One of `--ndjson` (the stream on stdout)
 and `-o <DIR>` is required; `-o` writes the stream to
 `<DIR>/records.ndjson` and prints `records-export/v1`. A read that fails

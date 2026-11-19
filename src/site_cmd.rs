@@ -36,6 +36,11 @@ use crate::site::SiteKeys;
 /// header's `since` says where it began.
 pub const MAX_YEARS: i64 = 10;
 
+/// How far back `--since` may go: every year to it is read (one request
+/// per person and one more per year, paced), so a typo for a far-off year
+/// is refused rather than read.
+pub const SINCE_LIMIT_YEARS: i64 = 30;
+
 /// Where the site commands keep sessions and what they read.
 pub struct Env {
     pub sessions: SessionStore,
@@ -118,19 +123,30 @@ fn table(out: &mut dyn Write, rows: &[Value]) -> Result<(), CliError> {
 /// The checks a command's arguments get before the session is read: a
 /// refused command reads nothing.
 pub fn check_args(cli: &Cli) -> Result<(), CliError> {
-    match &cli.command {
-        Command::Rx(RxCmd::List(args)) => range(&args.range).map(|_| ()),
-        Command::Costs(args) => range(&args.range).map(|_| ()),
+    let since = match &cli.command {
+        Command::Rx(RxCmd::List(args)) => range(&args.range)?.0,
+        Command::Costs(args) => range(&args.range)?.0,
         Command::Records(RecordsCmd::Export(args)) => {
             if args.ndjson && cli.common.json {
                 return Err(CliError::Usage("--ndjson is the output; drop --json".into()));
             }
-            args.since.as_deref().map(iso).transpose()?;
-            Ok(())
+            args.since.as_deref().map(iso).transpose()?
         }
-        Command::Api(args) => client::api_request(args.method, &args.path, args.data.as_deref()).map(|_| ()),
-        _ => Ok(()),
+        Command::Api(args) => {
+            return client::api_request(args.method, &args.path, args.data.as_deref()).map(|_| ());
+        }
+        _ => None,
+    };
+    if let Some(s) = since {
+        let (y, m, d) = dates::today_local();
+        let limit = shift((y - SINCE_LIMIT_YEARS, m, d));
+        if s < limit {
+            return Err(CliError::Usage(format!(
+                "--since {s} is more than {SINCE_LIMIT_YEARS} years back; every year to it is read, so give {limit} or later"
+            )));
+        }
     }
+    Ok(())
 }
 
 /// One member-site command as `profile`, its documents to `out`. The exit
@@ -269,26 +285,24 @@ struct Window {
 }
 
 /// The windows from `until` back, a year each (sharing their boundary day,
-/// which the fills' ids dedupe): down to `since`, or [`MAX_YEARS`] back.
-fn windows(since: Option<&str>, until: &str) -> Vec<Window> {
-    if since.is_some_and(|s| s > until) {
-        return Vec::new();
+/// which the fills' ids dedupe), down to `since` however far back it is.
+fn windows(since: &str, until: &str) -> Vec<Window> {
+    let mut out = Vec::new();
+    if since > until {
+        return out;
     }
     let (y, m, d) = dates::parse_iso(until).expect("an ISO date");
-    let mut out = Vec::new();
-    for back in 0..MAX_YEARS {
+    for back in 0.. {
         let end = shift((y - back, m, d));
         let start = shift((y - back - 1, m, d));
-        match since {
-            Some(s) if start.as_str() <= s => {
-                out.push(Window {
-                    start: s.to_string(),
-                    end,
-                });
-                break;
-            }
-            _ => out.push(Window { start, end }),
+        if start.as_str() <= since {
+            out.push(Window {
+                start: since.to_string(),
+                end,
+            });
+            break;
         }
+        out.push(Window { start, end });
     }
     out
 }
@@ -328,9 +342,10 @@ fn claims(ctx: &Ctx, person: &Person, w: &Window) -> Result<Vec<Fill>, CliError>
     Ok(portal::claims(&answer, person))
 }
 
-/// The trailer's skip code for fills only the financial summary lists
-/// (`Skip.code` is an open set).
+/// The trailer's skip codes (`Skip.code` is an open set): fills only the
+/// financial summary lists, and claims with no date caremark reads.
 const UNMATCHED: &str = "unmatched";
+const UNDATED: &str = "undated";
 
 /// What a pull read: the fills, newest first and each once; how many of
 /// the financial summary's fills matched no claim (left out, so one
@@ -339,6 +354,9 @@ const UNMATCHED: &str = "unmatched";
 struct Pull {
     fills: Vec<Fill>,
     unmatched: usize,
+    /// Claims with no date the site's answer gives in a form caremark
+    /// reads: left out, since no range can hold them.
+    undated: usize,
     error: Option<CliError>,
 }
 
@@ -350,7 +368,7 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
     let mut fills = Vec::new();
     let mut unmatched = 0;
     let mut error = None;
-    'windows: for w in windows(Some(since), &until) {
+    'windows: for w in windows(since, &until) {
         let costed = match financial(ctx, &w) {
             Ok(c) => c,
             Err(e) => {
@@ -374,11 +392,21 @@ fn pull(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Pull {
             }
         }
     }
+    let undated = fills.iter().filter(|f| f.filled.is_none()).count();
+    if undated > 0 && undated == fills.len() && error.is_none() {
+        // Not an account's data but the answer's shape: no claim carried a
+        // date caremark reads (portal::claim's keys, portal::date's forms).
+        error = Some(CliError::Upstream(format!(
+            "the claim history's {undated} claim{} carry no date caremark reads; the site's answer may have changed (docs/api.md)",
+            if undated == 1 { "" } else { "s" }
+        )));
+    }
     fills.retain(|f| f.filled.as_deref().is_some_and(|d| d >= since && d <= until.as_str()));
     fills.sort_by(|a, b| b.filled.cmp(&a.filled).then_with(|| a.id.cmp(&b.id)));
     Pull {
         fills,
         unmatched,
+        undated,
         error,
     }
 }
@@ -389,18 +417,51 @@ fn fills(ctx: &Ctx, who: &[&Person], since: &str, until: Option<&str>) -> Result
     if let Some(e) = pull.error {
         return Err(e);
     }
-    note_unmatched(ctx, pull.unmatched);
+    note_left_out(ctx, &pull);
     Ok(pull.fills)
 }
 
-fn note_unmatched(ctx: &Ctx, n: usize) {
-    if n > 0 {
-        ctx.note(&format!(
-            "{n} fill{} in the financial summary matched no claim and {} left out",
-            if n == 1 { "" } else { "s" },
-            if n == 1 { "is" } else { "are" }
-        ));
+/// What a pull left out, on stderr.
+fn note_left_out(ctx: &Ctx, pull: &Pull) {
+    for (n, what) in [
+        (pull.unmatched, "in the financial summary matched no claim"),
+        (pull.undated, "in the claim history had no date caremark reads"),
+    ] {
+        if n > 0 {
+            ctx.note(&format!(
+                "{n} fill{} {what} and {} left out",
+                if n == 1 { "" } else { "s" },
+                if n == 1 { "is" } else { "are" }
+            ));
+        }
     }
+}
+
+/// The trailer's skips for what a pull left out: a count each, no record
+/// content.
+fn left_out_skips(pull: &Pull) -> Vec<Skip> {
+    [
+        (
+            pull.unmatched,
+            UNMATCHED,
+            "the financial summary lists and no claim does, left out until the two reads can be matched",
+        ),
+        (
+            pull.undated,
+            UNDATED,
+            "the claim history gives with no date caremark reads, left out since no range holds them",
+        ),
+    ]
+    .into_iter()
+    .filter(|(n, _, _)| *n > 0)
+    .map(|(n, code, what)| Skip {
+        resource_type: Some("MedicationDispense".into()),
+        id: None,
+        search: None,
+        reason: format!("{n} fill{} {what}", if n == 1 { "" } else { "s" }),
+        code: code.into(),
+    })
+    .collect()
 }
 
 /// An export's `since` without `--since`: [`MAX_YEARS`] before today.
@@ -753,12 +814,10 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
     };
     let everyone = people(ctx)?;
     let person = pick(&everyone, args.patient.as_deref())?;
-    let Pull {
-        fills,
-        unmatched,
-        error,
-    } = pull(ctx, &[person], &since, None);
-    note_unmatched(ctx, unmatched);
+    let pulled = pull(ctx, &[person], &since, None);
+    note_left_out(ctx, &pulled);
+    let skips = left_out_skips(&pulled);
+    let Pull { fills, error, .. } = pulled;
     let mut file = match &args.output {
         Some(dir) => Some(create_export_file(dir)?),
         None => None,
@@ -782,17 +841,8 @@ fn export(ctx: &Ctx, args: &ExportArgs, out: &mut dyn Write) -> Result<i32, CliE
                 w.resource(&RawResource::from_value(&fhir::medication_dispense(f, rx.as_deref()))?)?;
                 w.resource(&RawResource::from_value(&fhir::explanation_of_benefit(f, &coverage))?)?;
             }
-            if unmatched > 0 {
-                w.skip(Skip {
-                    resource_type: Some("MedicationDispense".into()),
-                    id: None,
-                    search: None,
-                    reason: format!(
-                        "{unmatched} fill{} the financial summary lists and no claim does, left out until the two reads can be matched",
-                        if unmatched == 1 { "" } else { "s" }
-                    ),
-                    code: UNMATCHED.into(),
-                });
+            for skip in skips {
+                w.skip(skip);
             }
             Ok(())
         })();
@@ -834,7 +884,7 @@ mod tests {
 
     #[test]
     fn windows_go_back_a_year_at_a_time() {
-        let w = windows(Some("2025-03-01"), "2026-11-19");
+        let w = windows("2025-03-01", "2026-11-19");
         assert_eq!(
             w,
             [
@@ -848,11 +898,15 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(windows(Some("2026-01-01"), "2026-11-19").len(), 1);
-        assert_eq!(windows(None, "2026-11-19").len(), MAX_YEARS as usize);
-        assert_eq!(windows(None, "2028-02-29")[0].start, "2027-02-28");
+        assert_eq!(windows("2026-01-01", "2026-11-19").len(), 1);
+        assert_eq!(windows("2016-11-19", "2026-11-19").len(), MAX_YEARS as usize);
+        // However far back `since` is, every year to it.
+        let far = windows("2001-06-01", "2026-11-19");
+        assert_eq!(far.len(), 26);
+        assert_eq!(far.last().unwrap().start, "2001-06-01");
+        assert_eq!(windows("2020-01-01", "2028-02-29")[0].start, "2027-02-28");
         // A day after `until` reads nothing.
-        assert!(windows(Some("2026-11-20"), "2026-11-19").is_empty());
-        assert_eq!(windows(Some("2026-11-19"), "2026-11-19").len(), 1);
+        assert!(windows("2026-11-20", "2026-11-19").is_empty());
+        assert_eq!(windows("2026-11-19", "2026-11-19").len(), 1);
     }
 }
