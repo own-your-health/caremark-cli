@@ -58,8 +58,9 @@ While it is down, its Akamai edge sets a visitor-prioritization
 `_maintenance` (`akavpau_vp_www_caremark_com_caremark_maintenance`), and its
 APIs answer 503, the session check included. No sign-in can finish then.
 caremark tells this 503 apart by that cookie's name, both ends of it,
-never its value. A look-alike name (the word elsewhere in it) is not the
-cookie, and the cookie is never kept in the stored session. `auth login`
+never its value, and only on a 503 that itself sets it: the cookie is
+neither stored in the session nor sent, so a stale one in the browser says
+nothing. A look-alike name (the word elsewhere in it) is not the cookie. `auth login`
 says the site is down for maintenance while it waits, and a read is exit
 5 saying the same (`client::in_maintenance`).
 

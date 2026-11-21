@@ -19,6 +19,10 @@ out, and lists every read caremark makes).
 
 ## Quick start
 
+medrec is a separate CLI
+([install](https://github.com/piekstra/medrec-cli#install), v0.2.8 or
+later); caremark's own commands work without it.
+
 ```sh
 cargo install --git https://github.com/piekstra/caremark-cli --locked
 caremark profiles add me                            # one profile per caremark.com login

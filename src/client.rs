@@ -434,16 +434,11 @@ impl Client {
         let retry_after = header(RETRY_AFTER);
         // Maintenance is this answer's: a 503 that sets the waiting-room
         // cookie, which the jar does not keep.
-        let mut sets_waiting_room = false;
+        let waiting_room = sets_waiting_room(answer.headers());
         {
             let mut jar = self.jar.borrow_mut();
             for v in answer.headers().get_all(SET_COOKIE) {
                 if let Ok(v) = v.to_str() {
-                    sets_waiting_room |= v
-                        .split(';')
-                        .next()
-                        .and_then(|p| p.split_once('='))
-                        .is_some_and(|(n, _)| maintenance_cookie(n.trim()));
                     jar.apply(v);
                 }
             }
@@ -462,7 +457,7 @@ impl Client {
                 limit >> 20
             )));
         }
-        let maintenance = status == 503 && sets_waiting_room;
+        let maintenance = status == 503 && waiting_room;
         Ok(Answer {
             what,
             status,
@@ -580,13 +575,27 @@ fn maintenance_cookie(name: &str) -> bool {
     name.starts_with("akavpau_") && name.ends_with("_maintenance")
 }
 
-/// Whether a `Cookie` header holds the site's maintenance waiting-room
-/// cookie: names only, no value is read.
-pub fn in_maintenance(cookie_header: &str) -> bool {
+/// A `Cookie` header without the site's maintenance waiting-room cookie:
+/// edge state, not the session's, so neither stored nor sent.
+pub fn without_waiting_room(cookie_header: &str) -> String {
     cookie_header
         .split(';')
-        .filter_map(|pair| pair.split_once('=').map(|(n, _)| n.trim()))
-        .any(maintenance_cookie)
+        .map(str::trim)
+        .filter(|pair| !pair.split_once('=').is_some_and(|(n, _)| maintenance_cookie(n.trim())))
+        .filter(|pair| !pair.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Whether an answer's own `Set-Cookie` headers set the site's maintenance
+/// waiting-room cookie: names only, no value is read.
+pub fn sets_waiting_room(headers: &reqwest::header::HeaderMap) -> bool {
+    headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split(';').next()?.split_once('=').map(|(n, _)| n.trim().to_string()))
+        .any(|n| maintenance_cookie(&n))
 }
 
 fn login_remedy(profile: &ProfileName) -> String {
@@ -692,11 +701,15 @@ mod tests {
         assert!(e.message().contains("down for maintenance"), "{e}");
         let plain = refuse(&answer(503, "text/html", ""), &p).unwrap_err();
         assert!(!plain.message().contains("maintenance"), "{plain}");
-        assert!(in_maintenance(
-            "a=1; akavpau_vp_www_example_com_example_maintenance=x; b=2"
-        ));
-        assert!(!in_maintenance("a=1; akavpau_vp_www_example_com_queue=x"));
-        assert!(!in_maintenance("maintenance=1"));
+        assert_eq!(
+            without_waiting_room("a=1; akavpau_vp_www_example_com_example_maintenance=x; b=2"),
+            "a=1; b=2"
+        );
+        assert_eq!(
+            without_waiting_room("a=1; akavpau_vp_www_example_com_queue=x"),
+            "a=1; akavpau_vp_www_example_com_queue=x"
+        );
+        assert_eq!(without_waiting_room("maintenance=1"), "maintenance=1");
         // A stale waiting-room cookie is never kept, so it cannot mislabel
         // a later 5xx.
         let mut jar = Jar::parse("a=1; akavpau_vp_www_example_com_example_maintenance=x");
@@ -707,8 +720,12 @@ mod tests {
         let plain = refuse(&answer(500, "text/html", ""), &p).unwrap_err();
         assert!(!plain.message().contains("maintenance"), "{plain}");
         // The policy's name ends in _maintenance; the word elsewhere is not it.
-        assert!(!in_maintenance("akavpau_vp_www_example_com_maintenance_queue=x"));
-        assert!(!in_maintenance("akavpau_vp_maintenance_example_com_queue=x"));
+        for look_alike in [
+            "akavpau_vp_www_example_com_maintenance_queue=x",
+            "akavpau_vp_maintenance_example_com_queue=x",
+        ] {
+            assert_eq!(without_waiting_room(look_alike), look_alike);
+        }
     }
 
     #[test]
