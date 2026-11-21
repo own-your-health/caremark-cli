@@ -48,7 +48,8 @@ Report a vulnerability privately through GitHub's "Report a vulnerability"
   share or commit it. A person the latest family read did not list stays,
   marked `unlisted`, until they are listed again or `profiles remove
   <NAME>` deletes the profile's entries with its settings. Their label
-  moves to anyone still listed who is given it.
+  stays theirs: giving it to someone else is exit 2 until `patients label
+  --patient <LABEL> --clear` frees it.
 
 ## What caremark never does
 

@@ -254,7 +254,31 @@ struct Household {
 }
 
 impl Household {
+    /// A household that has labelled its people, as the README's quick
+    /// start does: `alex`, `sam` and `jordan`, the fixture's first names
+    /// lowercased, on the fixture account's ids.
     fn new() -> Household {
+        let h = Household::unlabelled();
+        let family: Value =
+            serde_json::from_str(&std::fs::read_to_string("tests/fixtures/site/member-family.json").unwrap()).unwrap();
+        let account = family["data"]["getPatientV2"]["id"].as_str().unwrap();
+        let members: serde_json::Map<String, Value> = family["data"]["getFamilyInfo"]["familyMemberList"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                let id = caremark::model::patient_id(account, m["personCode"].as_str().unwrap());
+                let label = m["firstName"].as_str().unwrap().to_lowercase();
+                (id, json!({ "label": label }))
+            })
+            .collect();
+        let config = json!({ "profiles": { "adult1": { "members": members } } });
+        std::fs::write(&h.config, config.to_string()).unwrap();
+        h
+    }
+
+    /// A household whose people have no label yet.
+    fn unlabelled() -> Household {
         let dir = tmp("house");
         let config = dir.join("config.json");
         std::fs::write(&config, r#"{"profiles":{"adult1":{}}}"#).unwrap();
@@ -425,7 +449,7 @@ fn costs_sum_what_was_paid_and_leave_reversed_fills_out() {
 #[test]
 fn an_export_is_one_persons_fills_as_fhir() {
     let h = Household::new();
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert_eq!(code, 0);
     let header = &lines[0];
     assert_eq!(header["schema"], "records-stream/v1");
@@ -519,7 +543,7 @@ fn an_export_since_a_day_bounds_the_fills_only() {
 fn an_export_to_a_folder_prints_its_summary() {
     let h = Household::new();
     let dir = h.dir.join("out");
-    let doc = h.json(&["records", "export", "--patient", "Alex", "-o", dir.to_str().unwrap()]);
+    let doc = h.json(&["records", "export", "--patient", "alex", "-o", dir.to_str().unwrap()]);
     assert_eq!(doc["schema"], "records-export/v1");
     assert_eq!(doc["complete"], true);
     assert_eq!(doc["counts"]["MedicationDispense"], 4);
@@ -559,7 +583,7 @@ fn ids(lines: &[Value]) -> Vec<String> {
 #[test]
 fn the_same_person_code_on_another_account_is_another_person() {
     let one = Household::new();
-    let (_, mine) = one.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (_, mine) = one.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     let other = Household::new();
     other.server.fault(Fault {
         experience: FAMILY,
@@ -568,7 +592,8 @@ fn the_same_person_code_on_another_account_is_another_person() {
         content_type: JSON,
         body: family_of_another_account(Some("SYN0000009")),
     });
-    let (code, theirs) = other.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let theirs_alex = ids_by_first_name(&other)["Alex"].clone();
+    let (code, theirs) = other.stream(&["records", "export", "--patient", &theirs_alex, "--ndjson"]);
     assert_eq!(code, 0);
     assert_ne!(mine[0]["patient"]["id"], theirs[0]["patient"]["id"]);
     // Patient, Coverage, the prescriptions and the fills: no id in common.
@@ -632,7 +657,7 @@ fn two_same_day_fills_with_no_claim_number_are_two() {
 #[test]
 fn a_prescription_is_the_same_from_a_narrow_pull_and_a_full_one() {
     let h = Household::new();
-    let (_, full) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (_, full) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     let (_, narrow) = h.stream(&[
         "records",
         "export",
@@ -682,7 +707,7 @@ fn claims_under_another_key_are_the_sites_failure_not_an_empty_account() {
         content_type: JSON,
         body: json!({ "data": { "getClaimV2": { "statusCode": "0000", "claimList": [] } } }).to_string(),
     });
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert_eq!(code, 5);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["complete"], false);
@@ -693,10 +718,10 @@ fn claims_under_another_key_are_the_sites_failure_not_an_empty_account() {
             .contains("gave no claim for"),
         "{trailer}"
     );
-    assert_eq!(h.run(&["costs", "--patient", "Alex"]).unwrap_err().exit_code(), 5);
+    assert_eq!(h.run(&["costs", "--patient", "alex"]).unwrap_err().exit_code(), 5);
     // Someone the financial summary lists nothing for is an empty account:
     // Jordan has no fills, and that is no failure.
-    let doc = h.json(&["costs", "--patient", "Jordan"]);
+    let doc = h.json(&["costs", "--patient", "jordan"]);
     assert_eq!(doc["items"].as_array().unwrap().len(), 0);
 }
 
@@ -743,7 +768,7 @@ fn an_export_the_site_cut_short_keeps_its_cookies() {
         body: "{}".into(),
     });
     h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert_eq!(code, 5);
     assert_eq!(lines.last().unwrap()["complete"], false);
     // The site failed, not the session: the answers' cookies are kept.
@@ -762,7 +787,7 @@ fn a_list_the_site_cut_short_keeps_its_cookies() {
     });
     h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
     let e = h
-        .run(&["costs", "--patient", "Alex", "--since", "2024-01-01"])
+        .run(&["costs", "--patient", "alex", "--since", "2024-01-01"])
         .unwrap_err();
     assert_eq!(e.exit_code(), 5);
     assert!(h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
@@ -791,7 +816,7 @@ fn a_503_during_the_sites_maintenance_says_so() {
         content_type: "text/html",
         body: "<p>down</p>".into(),
     });
-    let e = h.run(&["costs", "--patient", "Alex"]).unwrap_err();
+    let e = h.run(&["costs", "--patient", "alex"]).unwrap_err();
     assert_eq!(e.exit_code(), 5);
     assert!(e.message().contains("down for maintenance"), "{}", e.message());
 }
@@ -808,7 +833,7 @@ fn a_list_the_site_refused_keeps_no_cookie() {
     });
     h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
     let e = h
-        .run(&["rx", "list", "--patient", "Alex", "--since", "2024-01-01"])
+        .run(&["rx", "list", "--patient", "alex", "--since", "2024-01-01"])
         .unwrap_err();
     assert_eq!(e.exit_code(), 3);
     assert!(!h.stored().cookie_header.expose().contains("CVS_ONESITE_TOKEN=rotated"));
@@ -864,7 +889,7 @@ fn ids_by_first_name(h: &Household) -> BTreeMap<String, String> {
 
 #[test]
 fn a_label_names_one_person_and_takes_no_request() {
-    let h = Household::new();
+    let h = Household::unlabelled();
     let ids = ids_by_first_name(&h);
     let alex = &ids["Alex"];
     let reads = h.server.seen().len();
@@ -906,16 +931,11 @@ fn a_label_names_one_person_and_takes_no_request() {
         "{}",
         e.message()
     );
-    // A label that is another person's first name could mean either.
-    h.json(&["patients", "label", "--patient", "grownup", "sam"]);
-    let e = h.run(&["rx", "list", "--patient", "Sam"]).unwrap_err();
-    assert_eq!(e.exit_code(), 2);
-    assert!(
-        e.message().contains("one person's label and another's first name"),
-        "{}",
-        e.message()
-    );
-    h.json(&["patients", "label", "--patient", "sam", "grownup"]);
+    // A first name is no --patient: it names no one, and is not echoed.
+    let e = h.run(&["rx", "list", "--patient", "sam"]).unwrap_err();
+    assert_eq!(e.exit_code(), 4);
+    assert!(!e.message().contains("sam"), "{}", e.message());
+    assert!(e.remedy().unwrap_or_default().contains("patients label"));
     assert!(ids.values().all(|id| !e.message().contains(id.as_str())));
     // The same label again changes nothing; --clear removes it; clearing an
     // unset label changes nothing.
@@ -928,8 +948,8 @@ fn a_label_names_one_person_and_takes_no_request() {
 }
 
 #[test]
-fn a_label_held_by_someone_no_longer_listed_moves() {
-    let h = Household::new();
+fn a_label_held_by_someone_no_longer_listed_stays_theirs() {
+    let h = Household::unlabelled();
     let ids = ids_by_first_name(&h);
     h.json(&["patients", "label", "--patient", &ids["Jordan"], "kid"]);
     // Jordan leaves the plan: the family read lists two people.
@@ -947,7 +967,23 @@ fn a_label_held_by_someone_no_longer_listed_moves() {
         body: v.to_string(),
     });
     assert_eq!(h.json(&["patients", "list"])["items"].as_array().unwrap().len(), 2);
-    // The label is free for someone still listed, and names them alone.
+    // Jordan is still a member, unlisted: the label stays theirs until
+    // cleared, and the remedy names them by it alone.
+    let e = h
+        .run(&["patients", "label", "--patient", &ids["Sam"], "Kid"])
+        .unwrap_err();
+    assert_eq!(e.exit_code(), 2);
+    assert!(e.message().contains("did not list"), "{}", e.message());
+    let remedy = e.remedy().unwrap_or_default().to_string();
+    assert!(
+        remedy.contains("patients label --profile adult1 --patient Kid --clear"),
+        "{remedy}"
+    );
+    assert!(ids
+        .values()
+        .all(|id| !remedy.contains(id.as_str()) && !e.message().contains(id.as_str())));
+    let cleared = h.json(&["patients", "label", "--patient", "Kid", "--clear"]);
+    assert_eq!(cleared["items"][0]["id"], ids["Jordan"].as_str());
     let doc = h.json(&["patients", "label", "--patient", &ids["Sam"], "kid"]);
     assert_eq!(doc["items"][0]["label"], "kid");
     let (code, lines) = h.stream(&["records", "export", "--patient", "kid", "--ndjson"]);
@@ -957,7 +993,7 @@ fn a_label_held_by_someone_no_longer_listed_moves() {
 
 #[test]
 fn a_label_that_would_name_two_people_is_refused() {
-    let h = Household::new();
+    let h = Household::unlabelled();
     let e = h
         .run(&["patients", "label", "--patient", "p000000000000", "grownup"])
         .unwrap_err();
@@ -978,6 +1014,17 @@ fn a_label_that_would_name_two_people_is_refused() {
         assert_eq!(e.exit_code(), 2, "{who}");
         assert!(e.message().contains(why), "{who}: {}", e.message());
     }
+    // A label another listed member holds: cleared first, named by the
+    // label typed, quoted when it needs it.
+    h.json(&["patients", "label", "--patient", &ids["Jordan"], "big kid"]);
+    let e = h
+        .run(&["patients", "label", "--patient", &ids["Alex"], "big kid"])
+        .unwrap_err();
+    assert!(
+        e.remedy().unwrap_or_default().contains("--patient 'big kid' --clear"),
+        "{:?}",
+        e.remedy()
+    );
     let e = h
         .run(&["patients", "label", "--patient", "p000000000000", "x"])
         .unwrap_err();
@@ -1030,7 +1077,7 @@ fn a_fill_on_a_shared_boundary_day_is_counted_once() {
 #[test]
 fn costs_limit_shortens_the_rows_not_the_totals() {
     let h = Household::new();
-    let doc = h.json(&["costs", "--patient", "Alex", "--since", "2025-01-01", "--limit", "1"]);
+    let doc = h.json(&["costs", "--patient", "alex", "--since", "2025-01-01", "--limit", "1"]);
     assert_eq!(doc["items"].as_array().unwrap().len(), 1);
     assert_eq!(doc["total"], 4);
     assert_eq!(doc["totals"]["fills"], 3);
@@ -1042,12 +1089,12 @@ fn the_since_limit_is_counted_from_the_runs_today() {
     let h = Household::new();
     // TODAY is 2026-11-19: 30 years back is 1996-11-19.
     let e = h
-        .run(&["costs", "--patient", "Alex", "--since", "1996-11-18"])
+        .run(&["costs", "--patient", "alex", "--since", "1996-11-18"])
         .unwrap_err();
     assert_eq!(e.exit_code(), 2);
     assert!(e.message().contains("1996-11-19 or later"), "{}", e.message());
     assert!(h.server.seen().is_empty());
-    let doc = h.json(&["costs", "--patient", "Alex", "--since", "1996-11-19"]);
+    let doc = h.json(&["costs", "--patient", "alex", "--since", "1996-11-19"]);
     assert_eq!(doc["schema"], "cost-list/v1");
     assert_eq!(h.reads(CLAIMS).len(), 30);
 }
@@ -1064,7 +1111,7 @@ fn a_session_refused_partway_keeps_the_years_read_before_it() {
         body: "{}".into(),
     });
     h.server.state.lock().unwrap().set_cookie = Some("CVS_ONESITE_TOKEN=rotated; Path=/".into());
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert_eq!(code, 3);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["complete"], false);
@@ -1093,7 +1140,7 @@ fn a_refusal_before_the_first_fill_ends_an_empty_stream_incomplete() {
         content_type: JSON,
         body: "{}".into(),
     });
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert_eq!(code, 5);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["complete"], false);
@@ -1105,7 +1152,7 @@ fn a_refusal_before_the_first_fill_ends_an_empty_stream_incomplete() {
 #[test]
 fn a_fill_only_the_financial_summary_lists_is_a_skip() {
     let h = Household::new();
-    let (code, lines) = h.stream(&["records", "export", "--patient", "Sam", "--ndjson"]);
+    let (code, lines) = h.stream(&["records", "export", "--patient", "sam", "--ndjson"]);
     assert_eq!(code, 0);
     let trailer = lines.last().unwrap();
     assert_eq!(trailer["complete"], true);
@@ -1119,7 +1166,7 @@ fn a_fill_only_the_financial_summary_lists_is_a_skip() {
     assert_eq!(skipped[0]["resource_type"], "MedicationDispense");
     assert!(skipped[0]["reason"].as_str().unwrap().starts_with("1 fill "));
     // Alex's fills all match a claim.
-    let (_, lines) = h.stream(&["records", "export", "--patient", "Alex", "--ndjson"]);
+    let (_, lines) = h.stream(&["records", "export", "--patient", "alex", "--ndjson"]);
     assert!(lines
         .last()
         .unwrap()
@@ -1212,7 +1259,7 @@ fn claims_that_are_all_undated_are_the_sites_failure() {
         trailer["error"]["message"].as_str().unwrap().contains("carry no date"),
         "{trailer}"
     );
-    let e = h.run(&["costs", "--patient", "Alex"]).unwrap_err();
+    let e = h.run(&["costs", "--patient", "alex"]).unwrap_err();
     assert_eq!(e.exit_code(), 5);
 }
 
@@ -1256,7 +1303,7 @@ fn an_until_after_today_reads_no_year_after_it() {
 #[test]
 fn costs_print_a_table_and_the_totals() {
     let h = Household::new();
-    let (code, out) = h.run(&["costs", "--since", "2025-01-01", "--patient", "Alex"]).unwrap();
+    let (code, out) = h.run(&["costs", "--since", "2025-01-01", "--patient", "alex"]).unwrap();
     assert_eq!(code, 0);
     let text = String::from_utf8(out).unwrap();
     assert!(text.lines().next().unwrap().starts_with("FILLED | "), "{text}");
@@ -1312,7 +1359,7 @@ fn a_failure_the_answer_reports_is_exit_5() {
         content_type: JSON,
         body: r#"{"data":{"getClaimV2":{"statusCode":"9999","statusDescription":"Synthetic failure"}}}"#.into(),
     });
-    let e = h.run(&["rx", "list", "--patient", "Alex"]).unwrap_err();
+    let e = h.run(&["rx", "list", "--patient", "alex"]).unwrap_err();
     assert_eq!(e.exit_code(), 5);
     assert!(e.message().contains("9999: Synthetic failure"), "{}", e.message());
 }
@@ -1347,7 +1394,7 @@ fn the_patient_is_picked_or_refused_before_the_fills_are_read() {
 fn arguments_are_checked_before_the_site_is_read() {
     let h = Household::new();
     for args in [
-        &["records", "export", "--patient", "Alex", "--ndjson", "--json"][..],
+        &["records", "export", "--patient", "alex", "--ndjson", "--json"][..],
         &[
             "records",
             "export",

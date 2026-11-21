@@ -158,22 +158,20 @@ pub fn run(
                 "a label cannot be a member's id: --patient could not tell them apart".into(),
             ));
         }
-        if let Some(holder) = members.by_label(w).filter(|holder| *holder != id).map(str::to_string) {
-            // Held by someone the latest family read did not list: the
-            // label moves, rather than stay blocked by a person the user
-            // can no longer see.
-            let gone = members.members.get(&holder).is_some_and(|m| m.unlisted);
-            if !gone {
-                return Err(CliError::Usage(
-                    "another member of this profile has that label; a label names one member".into(),
-                ));
-            }
-            if let Some(m) = members.members.get_mut(&holder) {
-                m.label = None;
-            }
-            note(
-                cli,
-                "the label moves from a person the latest `patients list` did not list",
+        if let Some(holder) = members.by_label(w).filter(|holder| *holder != id) {
+            // Never moved: a person the latest read left out may be back on
+            // the next one, which a script would not hear about. The remedy
+            // names the holder by the label typed, never by id.
+            let whom = if members.members.get(holder).is_some_and(|m| m.unlisted) {
+                "a member the latest `patients list` did not list"
+            } else {
+                "another member of this profile"
+            };
+            return Err(
+                CliError::Usage(format!("{whom} has that label; a label names one member")).with_remedy(format!(
+                    "clear it first: `{BIN} patients label --profile {profile} --patient {} --clear`",
+                    shell_word(w)
+                )),
             );
         }
     }
@@ -195,6 +193,16 @@ pub fn run(
         store.save(&config)?;
     }
     print(cli, out, &id, &member)
+}
+
+/// `w` as one shell word: as it is when it needs no quoting, else in single
+/// quotes.
+fn shell_word(w: &str) -> String {
+    if !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "-_.@+".contains(c)) {
+        w.to_string()
+    } else {
+        format!("'{}'", w.replace('\'', r"'\''"))
+    }
 }
 
 fn note(cli: &Cli, msg: &str) {
@@ -297,5 +305,13 @@ mod tests {
         assert_eq!(adult1["members"]["p1"]["member_role"], "subscriber", "{raw}");
         assert_eq!(read[0].label.as_deref(), Some("alex"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_label_in_a_remedy_is_one_shell_word() {
+        assert_eq!(shell_word("kid"), "kid");
+        assert_eq!(shell_word("big kid"), "'big kid'");
+        assert_eq!(shell_word("o'brien"), r"'o'\''brien'");
+        assert_eq!(shell_word("$(x)"), "'$(x)'");
     }
 }

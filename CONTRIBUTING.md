@@ -12,3 +12,5 @@
    data, added to `EXPERIENCES` with its page named, and documented in
    `docs/api.md`. Nothing that writes.
 5. Squash merges only, with an approval and green CI.
+6. A change a user or a script would notice goes in `CHANGELOG.md` under
+   Unreleased, marked breaking when it is.

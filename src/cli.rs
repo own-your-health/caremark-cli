@@ -176,9 +176,8 @@ pub enum PatientsCmd {
     List,
     /// Set the household's own name for one person on the account, or
     /// clear it (patient-list/v1). Makes no request: the person is one
-    /// `patients list` has listed. `--patient` on every command then reads
-    /// an id, else a label, else a first name; a label that is another
-    /// person's first name is refused there as ambiguous.
+    /// `patients list` has listed. `--patient` on every command reads an
+    /// id, else a label, never a name.
     Label(LabelArgs),
 }
 
@@ -207,8 +206,8 @@ pub enum RxCmd {
 
 #[derive(Args, Debug)]
 pub struct RxListArgs {
-    /// Only this person: an id from `caremark patients list`, a label,
-    /// or a first name. Default: everyone on the account.
+    /// Only this person: an id from `caremark patients list`, or their
+    /// label. Default: everyone on the account.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
     #[command(flatten)]
@@ -217,8 +216,8 @@ pub struct RxListArgs {
 
 #[derive(Args, Debug)]
 pub struct CostsArgs {
-    /// Only this person: an id from `caremark patients list`, a label,
-    /// or a first name. Default: everyone on the account.
+    /// Only this person: an id from `caremark patients list`, or their
+    /// label. Default: everyone on the account.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
     /// Fills in this range (default: the last year).
@@ -237,8 +236,7 @@ pub enum RecordsCmd {
 #[derive(Args, Debug)]
 #[command(group(ArgGroup::new("destination").required(true).args(["ndjson", "output"])))]
 pub struct ExportArgs {
-    /// The person: an id from `caremark patients list`, a label, or a first
-    /// name.
+    /// The person: an id from `caremark patients list`, or their label.
     /// May be omitted when the account has one person.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
