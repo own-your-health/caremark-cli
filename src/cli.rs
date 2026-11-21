@@ -185,7 +185,7 @@ pub enum PatientsCmd {
 #[command(group(ArgGroup::new("label").required(true).args(["who", "clear"])))]
 pub struct LabelArgs {
     /// The person: an id from `caremark patients list`, or their label.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID_OR_LABEL")]
     pub patient: String,
     /// The household's name for them: unique within the profile, never a
     /// person's id.
@@ -208,7 +208,7 @@ pub enum RxCmd {
 pub struct RxListArgs {
     /// Only this person: an id from `caremark patients list`, or their
     /// label. Default: everyone on the account.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID_OR_LABEL")]
     pub patient: Option<String>,
     #[command(flatten)]
     pub range: RangeArgs,
@@ -218,7 +218,7 @@ pub struct RxListArgs {
 pub struct CostsArgs {
     /// Only this person: an id from `caremark patients list`, or their
     /// label. Default: everyone on the account.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID_OR_LABEL")]
     pub patient: Option<String>,
     /// Fills in this range (default: the last year).
     #[command(flatten)]
@@ -238,7 +238,7 @@ pub enum RecordsCmd {
 pub struct ExportArgs {
     /// The person: an id from `caremark patients list`, or their label.
     /// May be omitted when the account has one person.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID_OR_LABEL")]
     pub patient: Option<String>,
     /// Only fills on or after this day (YYYY-MM-DD), at most 30 years back;
     /// without it, the last 10 years. An export always runs to today
