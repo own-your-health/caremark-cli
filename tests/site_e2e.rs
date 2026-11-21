@@ -6,7 +6,7 @@
 //! vault (`Vault::new(MemoryKeys::new(), dir)`): no keychain item is read
 //! or written on any platform, and nothing is contacted beyond 127.0.0.1.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -830,6 +830,96 @@ fn errors_naming_a_person_carry_no_id() {
         assert!(ids.iter().all(|id| !text.contains(id.as_str())), "{text}");
         assert!(!text.contains("p000000000000"), "{text}");
     }
+}
+
+/// The ids `patients list` gives, by first name.
+fn ids_by_first_name(h: &Household) -> BTreeMap<String, String> {
+    h.json(&["patients", "list"])["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let first = p["name"].as_str().unwrap().split(' ').next().unwrap().to_string();
+            (first, p["id"].as_str().unwrap().to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_label_names_one_person_and_takes_no_request() {
+    let h = Household::new();
+    let ids = ids_by_first_name(&h);
+    let alex = &ids["Alex"];
+    let reads = h.server.seen().len();
+    let doc = h.json(&["patients", "label", "--patient", alex, "grownup"]);
+    assert_eq!(doc["schema"], "patient-list/v1");
+    let items = doc["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], alex.as_str());
+    assert_eq!(items[0]["label"], "grownup");
+    assert_eq!(items[0]["member_role"], "subscriber");
+    assert!(items[0].get("name").is_none(), "{doc}");
+    assert_eq!(h.server.seen().len(), reads, "patients label sent a request");
+    // The label shows in the list, and --patient takes it, case aside.
+    let listed = h.json(&["patients", "list"]);
+    let labelled: Vec<&Value> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["label"] == "grownup")
+        .collect();
+    assert_eq!(labelled.len(), 1);
+    assert_eq!(labelled[0]["id"], alex.as_str());
+    let (code, lines) = h.stream(&["records", "export", "--patient", "GrownUp", "--ndjson"]);
+    assert_eq!(code, 0);
+    assert_eq!(lines[0]["patient"]["id"], alex.as_str());
+    assert_eq!(lines[0]["patient"]["label"], "grownup");
+    // An error that must name people names them by label, never by id.
+    let e = h.run(&["records", "export", "--ndjson"]).unwrap_err();
+    assert!(
+        e.message().contains("(grownup and 2 without a label)"),
+        "{}",
+        e.message()
+    );
+    assert!(ids.values().all(|id| !e.message().contains(id.as_str())));
+    // The same label again changes nothing; --clear removes it; clearing an
+    // unset label changes nothing.
+    let again = h.json(&["patients", "label", "--patient", "grownup", "grownup"]);
+    assert_eq!(again["items"][0]["label"], "grownup");
+    let cleared = h.json(&["patients", "label", "--patient", "grownup", "--clear"]);
+    assert!(cleared["items"][0].get("label").is_none(), "{cleared}");
+    let still = h.json(&["patients", "label", "--patient", alex, "--clear"]);
+    assert!(still["items"][0].get("label").is_none(), "{still}");
+}
+
+#[test]
+fn a_label_that_would_name_two_people_is_refused() {
+    let h = Household::new();
+    let e = h
+        .run(&["patients", "label", "--patient", "p000000000000", "grownup"])
+        .unwrap_err();
+    // No one listed yet: patients list first.
+    assert_eq!(e.exit_code(), 4);
+    assert!(e.remedy().unwrap_or_default().contains("patients list"));
+    let ids = ids_by_first_name(&h);
+    h.json(&["patients", "label", "--patient", &ids["Sam"], "partner"]);
+    for (who, why) in [
+        ("partner", "another member"),
+        ("PARTNER", "another member"),
+        (ids["Jordan"].as_str(), "a member's id"),
+        ("   ", "empty"),
+    ] {
+        let e = h
+            .run(&["patients", "label", "--patient", &ids["Alex"], who])
+            .unwrap_err();
+        assert_eq!(e.exit_code(), 2, "{who}");
+        assert!(e.message().contains(why), "{who}: {}", e.message());
+    }
+    let e = h
+        .run(&["patients", "label", "--patient", "p000000000000", "x"])
+        .unwrap_err();
+    assert_eq!(e.exit_code(), 4);
+    assert!(!e.message().contains("p000000000000"), "{}", e.message());
 }
 
 #[test]

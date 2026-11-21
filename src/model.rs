@@ -24,6 +24,9 @@ pub struct Person {
     pub member_id: Option<String>,
     /// The member the session is signed in as.
     pub signed_in: bool,
+    /// The household's own name for the person (`patients label`), from
+    /// the profile's settings; never read from the site.
+    pub label: Option<String>,
 }
 
 impl Person {
@@ -342,6 +345,7 @@ mod tests {
             role: None,
             member_id: None,
             signed_in: true,
+            label: None,
         };
         assert_eq!(p.name().as_deref(), Some("Alex Example"));
     }

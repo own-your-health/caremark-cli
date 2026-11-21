@@ -22,13 +22,13 @@ Caremark member:
   and Realtime Pharmacy Benefit Check, with payer-to-payer onboarding
   moving to 1upHealth in December 2026. They are Aetna's, the insurer's,
   for Aetna's own members. A member whose medical insurer is not Aetna
-  has no Aetna claims there, and a third-party aggregator is ruled out by
-  the household's rules besides.
+  has no Aetna claims there. caremark also uses no third-party
+  aggregator: it reads the member's own site and nothing else.
 - **CVS Health's interoperability page** (cvshealth.com/interoperability)
   answered with an error page on 2026-11-19.
 
-The household chose the member site, accepting the risk under its Terms of
-Use (decision aceea06c).
+So caremark reads the member site, which carries a risk under its Terms
+of Use (below).
 
 ### Terms of Use
 
@@ -44,9 +44,9 @@ content-use paragraph:
 > systematically download and store Services content.
 
 caremark reads the member's own records for the member's personal,
-non-commercial use, one request at a time. Keeping them in the
-household's records is storing Services content, which is the risk
-aceea06c accepted.
+non-commercial use, one request at a time. Keeping them is storing
+Services content, a risk each user weighs for themselves (the README's
+"The site's terms").
 
 ## Member site
 

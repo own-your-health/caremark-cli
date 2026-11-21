@@ -439,6 +439,7 @@ mod tests {
             role: Some(pk_med_records::dto::member_role::SUBSCRIBER),
             member_id: Some("SYNM000001".into()),
             signed_in: true,
+            label: None,
         }
     }
 
