@@ -22,13 +22,13 @@ Caremark member:
   and Realtime Pharmacy Benefit Check, with payer-to-payer onboarding
   moving to 1upHealth in December 2026. They are Aetna's, the insurer's,
   for Aetna's own members. A member whose medical insurer is not Aetna
-  has no Aetna claims there, and a third-party aggregator is ruled out by
-  the household's rules besides.
+  has no Aetna claims there. caremark also uses no third-party
+  aggregator: it reads the member's own site and nothing else.
 - **CVS Health's interoperability page** (cvshealth.com/interoperability)
   answered with an error page on 2026-11-19.
 
-The household chose the member site, accepting the risk under its Terms of
-Use (decision aceea06c).
+So caremark reads the member site, which carries a risk under its Terms
+of Use (below).
 
 ### Terms of Use
 
@@ -44,11 +44,25 @@ content-use paragraph:
 > systematically download and store Services content.
 
 caremark reads the member's own records for the member's personal,
-non-commercial use, one request at a time. Keeping them in the
-household's records is storing Services content, which is the risk
-aceea06c accepted.
+non-commercial use, one request at a time. Keeping them is storing
+Services content, a risk each user weighs for themselves (the README's
+"The site's terms").
 
 ## Member site
+
+### Maintenance
+
+caremark.com goes down for maintenance, overnight on 2026-11-21 for one.
+While it is down, its Akamai edge sets a visitor-prioritization
+(waiting-room) cookie whose name starts with `akavpau_` and ends in
+`_maintenance` (`akavpau_vp_www_caremark_com_caremark_maintenance`), and its
+APIs answer 503, the session check included. No sign-in can finish then.
+caremark tells this 503 apart by that cookie's name, both ends of it,
+never its value, and only on a 503 that itself sets it: the cookie is
+neither stored in the session nor sent, so a stale one in the browser says
+nothing. A look-alike name (the word elsewhere in it) is not the cookie. `auth login`
+says the site is down for maintenance while it waits, and a read is exit
+5 saying the same (`client::in_maintenance`).
 
 ### Sign-in
 

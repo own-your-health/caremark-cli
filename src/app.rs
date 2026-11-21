@@ -93,6 +93,12 @@ pub fn run(cli: &Cli, profile_flag: bool) -> Result<(), CliError> {
             source::no_profile(profile_flag, "profiles")?;
             profiles_cmd(&ctx, cmd)
         }
+        Command::Patients(PatientsCmd::Label(args)) => {
+            // No request and no secret: the members are in the config.
+            let profile = source::site_profile(cli, &ctx.profiles()?)?;
+            let stdout = std::io::stdout();
+            crate::labels::run(cli, &ctx.store, &profile, args, &mut stdout.lock())
+        }
         Command::Patients(_) | Command::Rx(_) | Command::Costs(_) | Command::Records(_) | Command::Api(_) => site(&ctx),
         Command::SelfUpdate(args) => {
             source::no_profile(profile_flag, "self-update")?;
@@ -139,6 +145,7 @@ pub fn info() -> serde_json::Value {
             "api",
             // The login commands take --profile.
             pk_med_records::LOGIN_PROFILES,
+            pk_med_records::PATIENT_LABELS,
         ],
     )
     .with_profiles(PROFILES);

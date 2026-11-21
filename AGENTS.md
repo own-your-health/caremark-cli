@@ -22,6 +22,7 @@ cli-common tag medical-common pins.
 | `src/source.rs` | which configured profile a command signs in as (`resolve_profile`) |
 | `src/site.rs` | the member site's sign-in: the browser capture, the site's public keys (`SiteKeys`, from env.js), the session check (`SESSION_CHECK_URL`, `judge`) |
 | `src/site_cmd.rs` | the commands that read the site (`patients`, `rx`, `costs`, `records export`, `api`) against an `Env` (the vault and the site, or a test's): the year windows, the fills, the stream |
+| `src/labels.rs` | `patients label`: the household's names for a profile's people, kept in the profile's settings with every person the family read has listed (`record`), so the command sends no request |
 | `src/portal.rs` | every path caremark reads in an answer, into `model` |
 | `src/model.rs` | a person, a fill, a prescription, apart from the site's shapes; the stable ids |
 | `src/fhir.rs` | the FHIR written by hand from `model` (`docs/fhir.md`) |
@@ -57,10 +58,11 @@ These come from the household's plan and are not negotiable.
 
 ## The member site
 
-The household chose the member site (no API serves an employer plan's
-member; `docs/api.md` § Route), accepting the risk under its Terms of Use
-(decision aceea06c). Be gentle with it: one request at a time, at least
-`client::PACE` apart, no bulk crawling.
+caremark reads the member site because no API serves an employer plan's
+member (`docs/api.md` § Route). The site's Terms of Use carry a risk each
+user weighs for themselves (the README's "The site's terms"). Be gentle
+with it: one request at a time, at least `client::PACE` apart, no bulk
+crawling.
 
 - **Sign-in.** `auth login --browser --profile <NAME>` opens Chrome in the
   profile's kept browser profile (`Launch::profile_name`) at the site's

@@ -87,6 +87,7 @@ fn every_command_renders_help() {
         vec!["config", "show", "--help"],
         vec!["patients", "--help"],
         vec!["patients", "list", "--help"],
+        vec!["patients", "label", "--help"],
         vec!["rx", "--help"],
         vec!["rx", "list", "--help"],
         vec!["costs", "--help"],
@@ -138,6 +139,7 @@ fn info_declares_the_profile_and_the_browser_sign_in() {
         assert!(capabilities.contains(&serde_json::json!(c)), "{c}: {v}");
     }
     assert!(!capabilities.contains(&serde_json::json!("records-files")), "{v}");
+    assert!(capabilities.contains(&serde_json::json!("patient-labels")), "{v}");
     assert_eq!(v["auth"]["required"], true);
     assert_eq!(v["auth"]["method"], "browser-session");
     assert_eq!(
@@ -461,6 +463,13 @@ fn record_commands_check_their_arguments_first() {
         let out = caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
         let err = String::from_utf8_lossy(&out.get_output().stderr).to_string();
         assert!(!err.contains("profiles add") && err.contains(names), "{args:?}: {err}");
+    }
+    // `patients label` takes a label or --clear: neither, or both, is exit 2.
+    for args in [
+        vec!["patients", "label", "--patient", "x"],
+        vec!["patients", "label", "--patient", "x", "who", "--clear"],
+    ] {
+        caremark().env("XDG_CONFIG_HOME", tmp()).args(&args).assert().code(2);
     }
     // clap's own refusals: no destination, and two.
     caremark()

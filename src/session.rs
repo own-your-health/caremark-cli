@@ -60,9 +60,11 @@ struct EntryIn {
 
 impl Session {
     /// A session captured now.
+    /// A session from a `Cookie` header, less the site's maintenance
+    /// waiting-room cookie, which is edge state.
     pub fn new(cookie_header: Secret, user_agent: Option<String>) -> Self {
         Session {
-            cookie_header,
+            cookie_header: Secret::new(crate::client::without_waiting_room(cookie_header.expose())),
             user_agent,
             captured_at: crate::app::now_rfc3339(),
         }

@@ -7,6 +7,7 @@ pub mod cents;
 pub mod cli;
 pub mod client;
 pub mod fhir;
+pub mod labels;
 pub mod model;
 pub mod portal;
 pub mod session;

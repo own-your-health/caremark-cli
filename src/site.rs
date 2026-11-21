@@ -261,7 +261,10 @@ pub fn is_signed_in(doc: &serde_json::Value) -> bool {
 /// point it at a local server.
 fn check_at(client: &reqwest::blocking::Client, url: &str, keys: &SiteKeys, cookie_header: &str) -> Confirm {
     let what = format!("POST {}", path_of(url));
-    let Ok(mut cookie) = HeaderValue::from_str(cookie_header) else {
+    // The waiting-room cookie is edge state: not sent, so a 503 during
+    // maintenance sets it afresh, and a stale one says nothing.
+    let cookie_header = crate::client::without_waiting_room(cookie_header);
+    let Ok(mut cookie) = HeaderValue::from_str(&cookie_header) else {
         return Confirm::Fail(CliError::Other(
             "the session's Cookie header is not a valid HTTP header value".into(),
         ));
@@ -283,8 +286,18 @@ fn check_at(client: &reqwest::blocking::Client, url: &str, keys: &SiteKeys, cook
         Err(_) => return Confirm::undecided(format!("{what} got no answer")),
     };
     if let Some(said) = pk_cli_http::inconclusive(&answer) {
+        // Maintenance is this answer's own: a 503 that sets the
+        // waiting-room cookie, as the reads judge it.
+        let down = said.status == 503 && crate::client::sets_waiting_room(answer.headers());
         return Confirm::Undecided {
-            reason: format!("{what} answered HTTP {}", said.status),
+            reason: if down {
+                format!(
+                    "{what} answered HTTP 503 and caremark.com has set its maintenance waiting-room cookie: the site \
+                     is down for maintenance, so a sign-in cannot finish until it is back"
+                )
+            } else {
+                format!("{what} answered HTTP {}", said.status)
+            },
             retry_after: said.retry_after,
         };
     }
@@ -531,6 +544,29 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\n\r\n{\"statusCode\":\"0000\",\"active\":true}",
         );
         assert!(matches!(check_at(&plain, &url, &keys(), "a=b"), Confirm::Ready));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn maintenance_is_a_503_that_sets_the_waiting_room_cookie() {
+        let plain = client(None).unwrap();
+        let stale = "a=b; akavpau_vp_www_example_com_example_maintenance=old";
+        // A stale cookie in the capture is not sent, and a 503 without it is
+        // the plain reason.
+        let (url, server) = serve_once("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+        match check_at(&plain, &url, &keys(), stale) {
+            Confirm::Undecided { reason, .. } => assert!(!reason.contains("maintenance"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+        let head = server.join().unwrap();
+        assert!(head.contains("\r\ncookie: a=b\r\n"), "{head}");
+        let (url, server) = serve_once(
+            "HTTP/1.1 503 Service Unavailable\r\nSet-Cookie: akavpau_vp_www_example_com_example_maintenance=1; Path=/\r\nContent-Length: 0\r\n\r\n",
+        );
+        match check_at(&plain, &url, &keys(), "a=b") {
+            Confirm::Undecided { reason, .. } => assert!(reason.contains("down for maintenance"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
         server.join().unwrap();
     }
 

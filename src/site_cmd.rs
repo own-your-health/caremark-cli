@@ -13,6 +13,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use pk_cli_config::profile::ProfileName;
+use pk_cli_config::ConfigStore;
 use pk_cli_core::{dates, output, CliError, Money, Paged, RangeArgs};
 use pk_cli_secrets::Secret;
 use pk_med_records::dto::{kind, method, relationship};
@@ -82,6 +83,9 @@ struct Ctx<'a> {
     client: Client,
     /// `YYYY-MM-DD`.
     today: String,
+    /// caremark's config: the profile's members and their labels.
+    store: ConfigStore,
+    profile: ProfileName,
 }
 
 impl Ctx<'_> {
@@ -170,7 +174,13 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
     if let Some(keys) = &env.keys {
         client = client.with_keys(keys.clone());
     }
-    let ctx = Ctx { cli, client, today };
+    let ctx = Ctx {
+        cli,
+        client,
+        today,
+        store: ConfigStore::new(BIN).with_override(cli.config.clone()),
+        profile: profile.clone(),
+    };
     let result = match &cli.command {
         Command::Patients(PatientsCmd::List) => patients(&ctx, out).map(|()| 0),
         Command::Rx(RxCmd::List(args)) => rx_list(&ctx, args, out).map(|()| 0),
@@ -200,9 +210,12 @@ pub fn run(cli: &Cli, env: &Env, profile: &ProfileName, out: &mut dyn Write) -> 
 /// for the in-process tests.
 pub fn run_args(cli: &Cli, env: &Env, out: &mut dyn Write) -> Result<i32, CliError> {
     check_args(cli, &env.today())?;
-    let store = pk_cli_config::ConfigStore::new(BIN).with_override(cli.config.clone());
+    let store = ConfigStore::new(BIN).with_override(cli.config.clone());
     let profiles = store.load::<crate::app::Config>()?.profiles;
     let profile = crate::source::site_profile(cli, &profiles)?;
+    if let Command::Patients(PatientsCmd::Label(args)) = &cli.command {
+        return crate::labels::run(cli, &store, &profile, args, out).map(|()| 0);
+    }
     run(cli, env, &profile, out)
 }
 
@@ -262,22 +275,31 @@ fn range(r: &RangeArgs) -> Result<(Option<String>, Option<String>), CliError> {
 
 // ---------------------------------------------------------------- reads
 
-/// The people on the account, the signed-in member first.
+/// The people on the account, the signed-in member first, with the
+/// household's labels for them. The members read are added to the
+/// profile's settings, which `patients label` checks against; a config
+/// that cannot be written is a warning, since the read itself succeeded.
 fn people(ctx: &Ctx) -> Result<Vec<Person>, CliError> {
     let answer = ctx
         .client
         .experience(experience("member-family"), &json!({ "data": {} }))?;
-    let people = portal::people(&answer)?;
+    let mut people = portal::people(&answer)?;
     if people.is_empty() {
         return Err(CliError::NotFound(
             "the member site lists no one on this account (member-family); the site may have changed (docs/api.md)"
                 .into(),
         ));
     }
+    if let Err(e) = crate::labels::record(&ctx.store, &ctx.profile, &mut people) {
+        ctx.note(&format!(
+            "warning: the people read are not recorded for `patients label` ({e})"
+        ));
+    }
     Ok(people)
 }
 
-/// The person `q` names: an id from `patients list`, or a first name.
+/// The person `q` names: an id from `patients list`, a label, or a first
+/// name.
 /// Without `q`, the only person on the account. The errors name no one and
 /// echo no `q`: an id is a digest of short identifiers, which trying every
 /// value recovers, so it stays out of error text (medical-common
@@ -286,19 +308,41 @@ fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliErro
     let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) else {
         return match people {
             [one] => Ok(one),
-            many => Err(CliError::Usage(format!(
-                "pass --patient <ID>: there are {} people on this account; `{BIN} patients list` names them",
-                many.len()
-            ))),
+            many => {
+                // Named by label, the household's own name; never by id.
+                let labels: Vec<&str> = many.iter().filter_map(|p| p.label.as_deref()).collect();
+                let named = match (labels.len(), many.len() - labels.len()) {
+                    (0, _) => String::new(),
+                    (_, 0) => format!(" ({})", labels.join(", ")),
+                    (_, n) => format!(" ({} and {n} without a label)", labels.join(", ")),
+                };
+                Err(CliError::Usage(format!(
+                    "pass --patient <ID>: there are {} people on this account{named}; `{BIN} patients list` names them",
+                    many.len()
+                )))
+            }
         };
     };
-    if let Some(p) = people.iter().find(|p| p.id == q) {
+    if let Some(p) = people.iter().find(|p| crate::labels::is_the_id(q, &p.id)) {
         return Ok(p);
     }
     let by_name: Vec<&Person> = people
         .iter()
         .filter(|p| p.first_name.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(q)))
         .collect();
+    // A label names one person; one that is also someone else's first name
+    // could mean either, so it is refused rather than guessed.
+    if let Some(p) = people
+        .iter()
+        .find(|p| crate::labels::is_the_label(q, p.label.as_deref()))
+    {
+        if by_name.iter().any(|other| other.id != p.id) {
+            return Err(CliError::Usage(format!(
+                "--patient is one person's label and another's first name; pass the id from `{BIN} patients list`"
+            )));
+        }
+        return Ok(p);
+    }
     match by_name.as_slice() {
         [one] => Ok(one),
         [] => Err(CliError::NotFound("--patient names no one on this account".into())
@@ -593,7 +637,7 @@ pub fn context(p: &Person) -> PatientContext {
     PatientContext {
         id: p.id.clone(),
         organization: fhir::ORGANIZATION.into(),
-        label: None,
+        label: p.label.clone(),
         relationship: p.signed_in.then(|| relationship::SELF.into()),
         kind: Some(kind::MEMBER.into()),
         member_role: p.role.map(str::to_string),
@@ -603,7 +647,7 @@ pub fn context(p: &Person) -> PatientContext {
     }
 }
 
-const PATIENT_COLUMNS: &[&str] = &["name", "id", "member_role", "relationship"];
+const PATIENT_COLUMNS: &[&str] = &["name", "label", "id", "member_role", "relationship"];
 
 fn patients(ctx: &Ctx, out: &mut dyn Write) -> Result<(), CliError> {
     let rows: Vec<PatientContext> = people(ctx)?.iter().map(context).collect();

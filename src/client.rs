@@ -160,12 +160,15 @@ pub struct Jar {
 }
 
 impl Jar {
+    /// A `Cookie` header's cookies, less the site's maintenance
+    /// waiting-room cookie, which is edge state, not the session's.
     pub fn parse(header: &str) -> Jar {
         let cookies = header
             .split(';')
             .filter_map(|pair| {
                 let (name, value) = pair.trim().split_once('=')?;
-                (!name.trim().is_empty()).then(|| (name.trim().to_string(), value.trim().to_string()))
+                let name = name.trim();
+                (!name.is_empty() && !maintenance_cookie(name)).then(|| (name.to_string(), value.trim().to_string()))
             })
             .collect();
         Jar {
@@ -196,7 +199,9 @@ impl Jar {
             return;
         };
         let (name, value) = (name.trim(), value.trim());
-        if name.is_empty() {
+        // The waiting-room cookie is kept out of the session: a stale one
+        // would read every later 5xx as maintenance.
+        if name.is_empty() || maintenance_cookie(name) {
             return;
         }
         let expired = parts.any(|a| {
@@ -427,6 +432,9 @@ impl Client {
         };
         let content_type = header(CONTENT_TYPE);
         let retry_after = header(RETRY_AFTER);
+        // Maintenance is this answer's: a 503 that sets the waiting-room
+        // cookie, which the jar does not keep.
+        let waiting_room = sets_waiting_room(answer.headers());
         {
             let mut jar = self.jar.borrow_mut();
             for v in answer.headers().get_all(SET_COOKIE) {
@@ -449,12 +457,14 @@ impl Client {
                 limit >> 20
             )));
         }
+        let maintenance = status == 503 && waiting_room;
         Ok(Answer {
             what,
             status,
             content_type,
             retry_after,
             body,
+            maintenance,
         })
     }
 }
@@ -553,6 +563,39 @@ pub struct Answer {
     pub content_type: Option<String>,
     pub retry_after: Option<String>,
     pub body: Vec<u8>,
+    /// A 503 whose own `Set-Cookie` carried the site's maintenance
+    /// waiting-room cookie.
+    pub maintenance: bool,
+}
+
+/// Akamai's visitor-prioritization cookie (`akavpau_<property>_<policy>`)
+/// for a policy named for maintenance: caremark.com sets it, and answers
+/// 503, while it is down for maintenance (docs/api.md).
+fn maintenance_cookie(name: &str) -> bool {
+    name.starts_with("akavpau_") && name.ends_with("_maintenance")
+}
+
+/// A `Cookie` header without the site's maintenance waiting-room cookie:
+/// edge state, not the session's, so neither stored nor sent.
+pub fn without_waiting_room(cookie_header: &str) -> String {
+    cookie_header
+        .split(';')
+        .map(str::trim)
+        .filter(|pair| !pair.split_once('=').is_some_and(|(n, _)| maintenance_cookie(n.trim())))
+        .filter(|pair| !pair.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Whether an answer's own `Set-Cookie` headers set the site's maintenance
+/// waiting-room cookie: names only, no value is read.
+pub fn sets_waiting_room(headers: &reqwest::header::HeaderMap) -> bool {
+    headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split(';').next()?.split_once('=').map(|(n, _)| n.trim().to_string()))
+        .any(|n| maintenance_cookie(&n))
 }
 
 fn login_remedy(profile: &ProfileName) -> String {
@@ -610,6 +653,11 @@ pub fn refuse(a: &Answer, profile: &ProfileName) -> Result<(), CliError> {
             };
             Err(e)
         }
+        503 if a.maintenance => Err(CliError::Upstream(format!(
+            "caremark.com is down for maintenance: it answered {what} with HTTP {status} and set its maintenance \
+             waiting-room cookie"
+        ))
+        .with_remedy("try again in a few hours; the site's maintenance is often overnight")),
         500..=599 => Err(
             CliError::Upstream(format!("the member site answered {what} with HTTP {status}"))
                 .with_remedy("try again later"),
@@ -639,6 +687,44 @@ mod tests {
             content_type: Some(content_type.into()),
             retry_after: None,
             body: body.as_bytes().to_vec(),
+            maintenance: false,
+        }
+    }
+
+    #[test]
+    fn a_503_with_the_maintenance_cookie_says_so() {
+        let p = adult1();
+        let mut down = answer(503, "text/html", "");
+        down.maintenance = true;
+        let e = refuse(&down, &p).unwrap_err();
+        assert_eq!(e.exit_code(), 5);
+        assert!(e.message().contains("down for maintenance"), "{e}");
+        let plain = refuse(&answer(503, "text/html", ""), &p).unwrap_err();
+        assert!(!plain.message().contains("maintenance"), "{plain}");
+        assert_eq!(
+            without_waiting_room("a=1; akavpau_vp_www_example_com_example_maintenance=x; b=2"),
+            "a=1; b=2"
+        );
+        assert_eq!(
+            without_waiting_room("a=1; akavpau_vp_www_example_com_queue=x"),
+            "a=1; akavpau_vp_www_example_com_queue=x"
+        );
+        assert_eq!(without_waiting_room("maintenance=1"), "maintenance=1");
+        // A stale waiting-room cookie is never kept, so it cannot mislabel
+        // a later 5xx.
+        let mut jar = Jar::parse("a=1; akavpau_vp_www_example_com_example_maintenance=x");
+        assert_eq!(jar.header(), "a=1");
+        jar.apply("akavpau_vp_www_example_com_example_maintenance=y; Path=/");
+        assert_eq!(jar.header(), "a=1");
+        assert!(!jar.changed());
+        let plain = refuse(&answer(500, "text/html", ""), &p).unwrap_err();
+        assert!(!plain.message().contains("maintenance"), "{plain}");
+        // The policy's name ends in _maintenance; the word elsewhere is not it.
+        for look_alike in [
+            "akavpau_vp_www_example_com_maintenance_queue=x",
+            "akavpau_vp_maintenance_example_com_queue=x",
+        ] {
+            assert_eq!(without_waiting_room(look_alike), look_alike);
         }
     }
 

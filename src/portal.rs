@@ -156,6 +156,7 @@ pub fn people(answer: &Value) -> Result<Vec<Person>, CliError> {
             role,
             member_id: None,
             signed_in,
+            label: None,
         };
         // The signed-in member is in the family list too: what one read
         // leaves out, the other may give.
@@ -528,6 +529,7 @@ mod tests {
             role: None,
             member_id: None,
             signed_in: true,
+            label: None,
         };
         let drug = Drug {
             name: "EXAMPLEPRIL".into(),
