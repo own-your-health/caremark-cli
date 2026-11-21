@@ -175,6 +175,29 @@ fn auth_status_when_nothing_is_stored() {
         .stdout(predicate::str::contains("Keychain:      empty"));
 }
 
+/// A `--json` error carries its next step apart, as `error.remedy`
+/// (cli-common v0.33.4), and never the `--patient` it was given.
+#[test]
+fn a_json_error_carries_its_remedy() {
+    let out = caremark()
+        .args([
+            "patients",
+            "label",
+            "--profile",
+            "adult1",
+            "--patient",
+            "p000000000000",
+            "kid",
+            "--json",
+        ])
+        .assert()
+        .code(4);
+    let e = error_of(&out);
+    assert_eq!(e["error"]["code"], "not_found", "{e}");
+    assert!(e["error"]["remedy"].as_str().unwrap().contains("patients list"), "{e}");
+    assert!(!e.to_string().contains("p000000000000"), "{e}");
+}
+
 /// A profile must be configured: an unknown one is exit 2 naming the
 /// configured ones, none configured names `profiles add`, and a lone
 /// profile is never picked for a command that names none.
