@@ -175,6 +175,7 @@ profile, `auth login` refuses before Chrome opens unless `--overwrite`.
 | What | Where | Removed by |
 | --- | --- | --- |
 | The session: the `Cookie` header, the browser's user agent and when it was captured, as one JSON entry `<profile>/session` | caremark's vault: one encrypted, owner-only (`0600`) file per entry under `~/.config/caremark/vault/`, sealed with one key, the keychain item `vault-key` in service `piekstra.caremark` | `caremark auth logout --profile <NAME>`, first; `caremark auth reset` removes every entry and the key |
+| The people `patients list` has read, per profile: each person's `Patient.id`, member role, whether they sign in, and the household's label (`patients label`); no name the site gives | caremark's config (`caremark config path`), owner-only (`0600`) | `caremark profiles remove <NAME>`, with the profile's settings |
 | The Chrome profile `--browser` signs in through, one per profile, kept so the site remembers this device: the site's cookies (encrypted by Chrome), its site storage and the window's history | `~/Library/Application Support/piekstra.caremark/browser-profile-<profile>`, owner-only (`0700`); under `$XDG_DATA_HOME` on Linux | `caremark auth logout --profile <NAME>`, after the session |
 
 The session never goes on a command line or into a log, and on disk only

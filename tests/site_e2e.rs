@@ -887,6 +887,14 @@ fn a_label_names_one_person_and_takes_no_request() {
         .collect();
     assert_eq!(labelled.len(), 1);
     assert_eq!(labelled[0]["id"], alex.as_str());
+    // An id is read case aside, by every command alike.
+    let upper = alex.to_ascii_uppercase();
+    let doc = h.json(&["rx", "list", "--patient", &upper, "--since", "2025-01-01"]);
+    assert!(doc["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["patient"] == alex.as_str()));
     let (code, lines) = h.stream(&["records", "export", "--patient", "GrownUp", "--ndjson"]);
     assert_eq!(code, 0);
     assert_eq!(lines[0]["patient"]["id"], alex.as_str());

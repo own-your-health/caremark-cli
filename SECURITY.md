@@ -38,7 +38,15 @@ Report a vulnerability privately through GitHub's "Report a vulnerability"
 - `auth logout --profile <NAME>` and `profiles remove <NAME>` remove that
   profile's session, then its Chrome profile. `auth reset` removes every
   session and the vault key.
-- The config file holds the profile names.
+- The config file (`caremark config path`, owner-only, `0600`) holds the
+  profile names and, per profile, every person the family read has
+  listed: their `Patient.id`, member role, whether they are the member
+  who signs in, and the household's label once `patients label` set one.
+  It holds no name the site gives. A `Patient.id` is a digest of short
+  identifiers, which trying every value recovers, and a label is often a
+  first name, so the file is as private as the records: do not sync,
+  share or commit it. `profiles remove <NAME>` deletes the profile's
+  entries with its settings.
 
 ## What caremark never does
 

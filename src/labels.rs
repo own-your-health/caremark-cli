@@ -42,18 +42,29 @@ pub struct Member {
     pub signed_in: bool,
 }
 
+/// Whether `q` (a `--patient` value) is the id `id`: case aside, as
+/// every command reads `--patient`.
+pub fn is_the_id(q: &str, id: &str) -> bool {
+    q.eq_ignore_ascii_case(id)
+}
+
+/// Whether `q` (a `--patient` value) is the label `label`: case aside.
+pub fn is_the_label(q: &str, label: Option<&str>) -> bool {
+    label.is_some_and(|l| l.eq_ignore_ascii_case(q))
+}
+
 impl Members {
     /// The id of the member whose label is `q`, case aside.
     fn by_label(&self, q: &str) -> Option<&str> {
         self.members
             .iter()
-            .find(|(_, m)| m.label.as_deref().is_some_and(|l| l.eq_ignore_ascii_case(q)))
+            .find(|(_, m)| is_the_label(q, m.label.as_deref()))
             .map(|(id, _)| id.as_str())
     }
 
     /// Whether `q` is a member's id, case aside.
     fn is_id(&self, q: &str) -> bool {
-        self.members.keys().any(|id| id.eq_ignore_ascii_case(q))
+        self.members.keys().any(|id| is_the_id(q, id))
     }
 }
 
@@ -109,7 +120,7 @@ pub fn run(
     // No echo of --patient: it may be an id, which is a digest of short
     // identifiers (medical-common PRIVACY.md).
     let q = args.patient.trim();
-    let id = match members.members.keys().find(|id| id.eq_ignore_ascii_case(q)) {
+    let id = match members.members.keys().find(|id| is_the_id(q, id)) {
         Some(id) => id.clone(),
         None => match members.by_label(q) {
             Some(id) => id.to_string(),

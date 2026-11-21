@@ -323,14 +323,14 @@ fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliErro
             }
         };
     };
-    if let Some(p) = people.iter().find(|p| p.id == q) {
+    if let Some(p) = people.iter().find(|p| crate::labels::is_the_id(q, &p.id)) {
         return Ok(p);
     }
     // A label before a first name: the household chose it to name one
     // person.
     if let Some(p) = people
         .iter()
-        .find(|p| p.label.as_deref().is_some_and(|l| l.eq_ignore_ascii_case(q)))
+        .find(|p| crate::labels::is_the_label(q, p.label.as_deref()))
     {
         return Ok(p);
     }
