@@ -317,40 +317,26 @@ fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliErro
                     (_, n) => format!(" ({} and {n} without a label)", labels.join(", ")),
                 };
                 Err(CliError::Usage(format!(
-                    "pass --patient <ID>: there are {} people on this account{named}; `{BIN} patients list` names them",
+                    "pass --patient <ID or label>: there are {} people on this account{named}; `{BIN} patients list` lists them",
                     many.len()
                 )))
             }
         };
     };
-    if let Some(p) = people.iter().find(|p| crate::labels::is_the_id(q, &p.id)) {
-        return Ok(p);
-    }
-    let by_name: Vec<&Person> = people
+    // An id, else a label (unique within the profile), never a name the
+    // site shows: a name on the command line reaches shell history and
+    // transcripts, and the label stands in for it (medical-common DESIGN §1).
+    people
         .iter()
-        .filter(|p| p.first_name.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(q)))
-        .collect();
-    // A label names one person; one that is also someone else's first name
-    // could mean either, so it is refused rather than guessed.
-    if let Some(p) = people
-        .iter()
-        .find(|p| crate::labels::is_the_label(q, p.label.as_deref()))
-    {
-        if by_name.iter().any(|other| other.id != p.id) {
-            return Err(CliError::Usage(format!(
-                "--patient is one person's label and another's first name; pass the id from `{BIN} patients list`"
-            )));
-        }
-        return Ok(p);
-    }
-    match by_name.as_slice() {
-        [one] => Ok(one),
-        [] => Err(CliError::NotFound("--patient names no one on this account".into())
-            .with_remedy(format!("`{BIN} patients list` shows their ids"))),
-        _ => Err(CliError::Usage(format!(
-            "--patient names more than one person on this account (a first name they share); pass the id from `{BIN} patients list`"
-        ))),
-    }
+        .find(|p| crate::labels::is_the_id(q, &p.id))
+        .or_else(|| people.iter().find(|p| crate::labels::is_the_label(q, p.label.as_deref())))
+        .ok_or_else(|| {
+            CliError::NotFound("--patient names no one on this account: give an id or a label".into()).with_remedy(
+                format!(
+                    "`{BIN} patients list` shows their ids and labels; `{BIN} patients label --patient <ID> <WHO>` gives one a label"
+                ),
+            )
+        })
 }
 
 /// A year's read: `[start, end]`, `YYYY-MM-DD`.

@@ -91,7 +91,8 @@ caremark --profile me records export --patient alex --ndjson   # one person's re
 caremark --profile me api POST member-family --data '{"data":{}}'
 ```
 
-`--patient` takes an id from `patients list`, a label, or a first name.
+`--patient` takes an id from `patients list` or a label, never a name: a
+name typed there stays in shell history and in any agent's transcript.
 `patients label --patient <ID> <WHO>` gives one person a name of your own,
 and `--clear` removes it. One sign-in sees the whole family, so this is
 how each person gets one. A label is unique within the profile and never
