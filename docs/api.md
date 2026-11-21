@@ -50,6 +50,17 @@ Services content, a risk each user weighs for themselves (the README's
 
 ## Member site
 
+### Maintenance
+
+caremark.com goes down for maintenance, overnight on 2026-11-21 for one.
+While it is down, its Akamai edge sets a visitor-prioritization
+(waiting-room) cookie whose name ends in `_maintenance`
+(`akavpau_vp_www_caremark_com_caremark_maintenance`), and its APIs answer
+503, the session check included. No sign-in can finish then. caremark
+tells this 503 apart by that cookie's name, never its value. `auth login`
+says the site is down for maintenance while it waits, and a read is exit
+5 saying the same (`client::in_maintenance`).
+
 ### Sign-in
 
 The sign-in page (`/memberportal/...`, a Next.js app) runs Akamai Bot

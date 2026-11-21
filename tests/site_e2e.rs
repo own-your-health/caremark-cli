@@ -780,6 +780,23 @@ fn a_mistyped_patient_after_the_family_read_keeps_its_cookies() {
 }
 
 #[test]
+fn a_503_during_the_sites_maintenance_says_so() {
+    let h = Household::new();
+    // The family read sets the waiting-room cookie; the claims read is down.
+    h.server.state.lock().unwrap().set_cookie = Some("akavpau_vp_www_example_com_example_maintenance=1; Path=/".into());
+    h.server.fault(Fault {
+        experience: CLAIMS,
+        nth: None,
+        status: 503,
+        content_type: "text/html",
+        body: "<p>down</p>".into(),
+    });
+    let e = h.run(&["costs", "--patient", "Alex"]).unwrap_err();
+    assert_eq!(e.exit_code(), 5);
+    assert!(e.message().contains("down for maintenance"), "{}", e.message());
+}
+
+#[test]
 fn a_list_the_site_refused_keeps_no_cookie() {
     let h = Household::new();
     h.server.fault(Fault {

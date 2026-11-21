@@ -186,6 +186,12 @@ impl Jar {
         self.cookies.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
     }
 
+    /// Whether the jar holds the site's maintenance waiting-room cookie
+    /// ([`in_maintenance`]).
+    pub fn in_maintenance(&self) -> bool {
+        self.cookies.iter().any(|(n, _)| maintenance_cookie(n))
+    }
+
     /// One `Set-Cookie` value: a new value replaces the cookie's, a new
     /// cookie is added, and an empty value or `Max-Age` of zero or less
     /// removes it. The other attributes (domain, path, expiry) are the
@@ -449,12 +455,14 @@ impl Client {
                 limit >> 20
             )));
         }
+        let maintenance = self.jar.borrow().in_maintenance();
         Ok(Answer {
             what,
             status,
             content_type,
             retry_after,
             body,
+            maintenance,
         })
     }
 }
@@ -553,6 +561,25 @@ pub struct Answer {
     pub content_type: Option<String>,
     pub retry_after: Option<String>,
     pub body: Vec<u8>,
+    /// The jar held the site's maintenance waiting-room cookie once the
+    /// answer's cookies were applied.
+    pub maintenance: bool,
+}
+
+/// Akamai's visitor-prioritization cookie (`akavpau_<property>_<policy>`)
+/// for a policy named for maintenance: caremark.com sets it, and answers
+/// 503, while it is down for maintenance (docs/api.md).
+fn maintenance_cookie(name: &str) -> bool {
+    name.starts_with("akavpau_") && name.contains("maintenance")
+}
+
+/// Whether a `Cookie` header holds the site's maintenance waiting-room
+/// cookie: names only, no value is read.
+pub fn in_maintenance(cookie_header: &str) -> bool {
+    cookie_header
+        .split(';')
+        .filter_map(|pair| pair.split_once('=').map(|(n, _)| n.trim()))
+        .any(maintenance_cookie)
 }
 
 fn login_remedy(profile: &ProfileName) -> String {
@@ -610,6 +637,11 @@ pub fn refuse(a: &Answer, profile: &ProfileName) -> Result<(), CliError> {
             };
             Err(e)
         }
+        500..=599 if a.maintenance => Err(CliError::Upstream(format!(
+            "caremark.com is down for maintenance: it answered {what} with HTTP {status} and set its maintenance \
+             waiting-room cookie"
+        ))
+        .with_remedy("try again in a few hours; the site's maintenance is often overnight")),
         500..=599 => Err(
             CliError::Upstream(format!("the member site answered {what} with HTTP {status}"))
                 .with_remedy("try again later"),
@@ -639,7 +671,25 @@ mod tests {
             content_type: Some(content_type.into()),
             retry_after: None,
             body: body.as_bytes().to_vec(),
+            maintenance: false,
         }
+    }
+
+    #[test]
+    fn a_503_with_the_maintenance_cookie_says_so() {
+        let p = adult1();
+        let mut down = answer(503, "text/html", "");
+        down.maintenance = true;
+        let e = refuse(&down, &p).unwrap_err();
+        assert_eq!(e.exit_code(), 5);
+        assert!(e.message().contains("down for maintenance"), "{e}");
+        let plain = refuse(&answer(503, "text/html", ""), &p).unwrap_err();
+        assert!(!plain.message().contains("maintenance"), "{plain}");
+        assert!(in_maintenance(
+            "a=1; akavpau_vp_www_example_com_example_maintenance=x; b=2"
+        ));
+        assert!(!in_maintenance("a=1; akavpau_vp_www_example_com_queue=x"));
+        assert!(!in_maintenance("maintenance=1"));
     }
 
     #[test]

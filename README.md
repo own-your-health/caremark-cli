@@ -40,6 +40,10 @@ the stream.
 | Typing the sign-in in the Chrome window: username, password, and a code by text or email on a device the site does not know | The sign-in page runs a bot check (Akamai Bot Manager) that refuses scripted input, so caremark never fills or clicks the page | Each time the session has ended. The Chrome profile caremark keeps lets the site remember the device, so a later sign-in usually asks no code |
 | Clicking "Always Allow" in the macOS keychain dialog | caremark's sessions are sealed with one key in the keychain, and macOS asks once for each newly built or upgraded binary | After an install or upgrade |
 
+caremark.com goes down for maintenance at times, often overnight. A sign-in
+cannot finish then, and a read is exit 5 saying the site is down for
+maintenance. Try again later.
+
 Everything else (lists, exports, imports) runs unattended while the
 session lasts. The site decides how long that is, and caremark has not
 measured it yet. A command run after it has ended is exit 3, naming

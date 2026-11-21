@@ -283,8 +283,18 @@ fn check_at(client: &reqwest::blocking::Client, url: &str, keys: &SiteKeys, cook
         Err(_) => return Confirm::undecided(format!("{what} got no answer")),
     };
     if let Some(said) = pk_cli_http::inconclusive(&answer) {
+        // The waiting-room cookie is in the browser's jar, which the
+        // capture hands over whole.
+        let down = said.status == 503 && crate::client::in_maintenance(cookie_header);
         return Confirm::Undecided {
-            reason: format!("{what} answered HTTP {}", said.status),
+            reason: if down {
+                format!(
+                    "{what} answered HTTP 503 and caremark.com has set its maintenance waiting-room cookie: the site \
+                     is down for maintenance, so a sign-in cannot finish until it is back"
+                )
+            } else {
+                format!("{what} answered HTTP {}", said.status)
+            },
             retry_after: said.retry_after,
         };
     }
