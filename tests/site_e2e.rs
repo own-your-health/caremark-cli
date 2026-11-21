@@ -935,7 +935,11 @@ fn a_label_names_one_person_and_takes_no_request() {
     let e = h.run(&["rx", "list", "--patient", "sam"]).unwrap_err();
     assert_eq!(e.exit_code(), 4);
     assert!(!e.message().contains("sam"), "{}", e.message());
-    assert!(e.remedy().unwrap_or_default().contains("patients label"));
+    let remedy = e.remedy().unwrap_or_default().to_string();
+    assert!(
+        remedy.contains("patients list") && remedy.contains("patients label"),
+        "{remedy}"
+    );
     assert!(ids.values().all(|id| !e.message().contains(id.as_str())));
     // The same label again changes nothing; --clear removes it; clearing an
     // unset label changes nothing.
@@ -1020,6 +1024,7 @@ fn a_label_that_would_name_two_people_is_refused() {
     let e = h
         .run(&["patients", "label", "--patient", &ids["Alex"], "big kid"])
         .unwrap_err();
+    assert_eq!(e.exit_code(), 2);
     assert!(
         e.remedy().unwrap_or_default().contains("--patient 'big kid' --clear"),
         "{:?}",
