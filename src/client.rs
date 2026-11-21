@@ -570,7 +570,7 @@ pub struct Answer {
 /// for a policy named for maintenance: caremark.com sets it, and answers
 /// 503, while it is down for maintenance (docs/api.md).
 fn maintenance_cookie(name: &str) -> bool {
-    name.starts_with("akavpau_") && name.contains("maintenance")
+    name.starts_with("akavpau_") && name.ends_with("_maintenance")
 }
 
 /// Whether a `Cookie` header holds the site's maintenance waiting-room
@@ -690,6 +690,9 @@ mod tests {
         ));
         assert!(!in_maintenance("a=1; akavpau_vp_www_example_com_queue=x"));
         assert!(!in_maintenance("maintenance=1"));
+        // The policy's name ends in _maintenance; the word elsewhere is not it.
+        assert!(!in_maintenance("akavpau_vp_www_example_com_maintenance_queue=x"));
+        assert!(!in_maintenance("akavpau_vp_maintenance_example_com_queue=x"));
     }
 
     #[test]

@@ -59,30 +59,31 @@ impl Members {
 
 /// After a family read: `people` with the labels the profile holds for
 /// them, and the members the read listed added to the profile's settings.
-/// None is removed, so an answer that lists fewer people keeps every label;
-/// the config is written only when something changed.
+/// None is removed, so an answer that lists fewer people keeps every label.
+/// The config is written only when a member is new or their role changed,
+/// and then from a fresh read of it, changing no label: a `patients label`
+/// saved since the first read keeps its label.
 pub fn record(store: &ConfigStore, profile: &ProfileName, people: &mut [Person]) -> Result<(), CliError> {
-    let mut config = store.load::<Config>()?;
-    let mut members: Members = config.profiles.settings(profile)?;
-    let mut changed = false;
+    let members: Members = store.load::<Config>()?.profiles.settings(profile)?;
+    let stale = |p: &Person, m: Option<&Member>| {
+        m.is_none_or(|m| m.member_role.as_deref() != p.role || m.signed_in != p.signed_in)
+    };
+    let changed = people.iter().any(|p| stale(p, members.members.get(&p.id)));
     for p in people.iter_mut() {
-        let role = p.role.map(str::to_string);
-        let m = members.members.entry(p.id.clone()).or_insert_with(|| {
-            changed = true;
-            Member::default()
-        });
-        if m.member_role != role || m.signed_in != p.signed_in {
-            m.member_role = role;
-            m.signed_in = p.signed_in;
-            changed = true;
-        }
-        p.label = m.label.clone();
+        p.label = members.members.get(&p.id).and_then(|m| m.label.clone());
     }
-    if changed {
-        config.profiles.set_settings(profile, &members)?;
-        store.save(&config)?;
+    if !changed {
+        return Ok(());
     }
-    Ok(())
+    let mut config = store.load::<Config>()?;
+    let mut fresh: Members = config.profiles.settings(profile)?;
+    for p in people.iter() {
+        let m = fresh.members.entry(p.id.clone()).or_default();
+        m.member_role = p.role.map(str::to_string);
+        m.signed_in = p.signed_in;
+    }
+    config.profiles.set_settings(profile, &fresh)?;
+    store.save(&config)
 }
 
 /// `patients label --profile <NAME> --patient <ID> (<WHO> | --clear)`.
@@ -172,4 +173,50 @@ fn print(cli: &Cli, out: &mut dyn Write, id: &str, m: &Member) -> Result<(), Cli
         None => format!("{id} has no label"),
     };
     writeln!(out, "{line}").map_err(|e| CliError::Other(format!("writing the output: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn person(id: &str, role: Option<&'static str>) -> Person {
+        Person {
+            id: id.into(),
+            key: "001".into(),
+            first_name: None,
+            last_name: None,
+            birth_date: None,
+            role,
+            member_id: None,
+            signed_in: false,
+            label: None,
+        }
+    }
+
+    #[test]
+    fn a_family_read_adds_people_and_keeps_their_labels() {
+        let dir = std::env::temp_dir().join(format!("caremark-labels-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"profiles":{"adult1":{}}}"#).unwrap();
+        let store = ConfigStore::new(BIN).with_override(Some(path.clone()));
+        let profile = ProfileName::parse("adult1").unwrap();
+        let mut read = vec![person("p1", None), person("p2", None)];
+        record(&store, &profile, &mut read).unwrap();
+        // A label set after the read; the next read changes a role.
+        let mut config = store.load::<Config>().unwrap();
+        let mut members: Members = config.profiles.settings(&profile).unwrap();
+        members.members.get_mut("p1").unwrap().label = Some("alex".into());
+        config.profiles.set_settings(&profile, &members).unwrap();
+        store.save(&config).unwrap();
+        let mut again = vec![person("p1", Some("subscriber"))];
+        record(&store, &profile, &mut again).unwrap();
+        assert_eq!(again[0].label.as_deref(), Some("alex"));
+        let kept: Members = store.load::<Config>().unwrap().profiles.settings(&profile).unwrap();
+        assert_eq!(kept.members["p1"].label.as_deref(), Some("alex"));
+        assert_eq!(kept.members["p1"].member_role.as_deref(), Some("subscriber"));
+        // Nobody is removed by a read that lists fewer people.
+        assert!(kept.members.contains_key("p2"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
