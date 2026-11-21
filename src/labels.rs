@@ -217,8 +217,8 @@ fn print(cli: &Cli, out: &mut dyn Write, id: &str, m: &Member) -> Result<(), Cli
             name: None,
             session: None,
         };
-        let doc = serde_json::to_value(pk_med_records::patient_list(vec![context])).unwrap_or_default();
-        let text = serde_json::to_string_pretty(&doc).unwrap_or_else(|_| doc.to_string());
+        let text = serde_json::to_string_pretty(&pk_med_records::patient_list(vec![context]))
+            .map_err(|e| CliError::Other(format!("encoding the output: {e}")))?;
         return writeln!(out, "{text}").map_err(|e| CliError::Other(format!("writing the output: {e}")));
     }
     let line = match &m.label {
