@@ -62,7 +62,8 @@ never its value, and only on a 503 that itself sets it: the cookie is
 neither stored in the session nor sent, so a stale one in the browser says
 nothing. A look-alike name (the word elsewhere in it) is not the cookie. `auth login`
 says the site is down for maintenance while it waits, and a read is exit
-5 saying the same (`client::in_maintenance`).
+5 saying the same (`client::refuse`, from `Answer.maintenance`, which
+`client::sets_waiting_room` decides).
 
 ### Sign-in
 
