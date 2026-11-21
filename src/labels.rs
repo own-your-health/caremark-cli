@@ -26,6 +26,10 @@ use crate::model::Person;
 pub struct Members {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, Member>,
+    /// Settings this build does not know (a later caremark's), written
+    /// back as they were read.
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
 }
 
 /// What caremark keeps of a member between runs: never a name.
@@ -40,6 +44,14 @@ pub struct Member {
     /// The member the profile signs in as.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub signed_in: bool,
+    /// The latest family read did not list them: they left the account,
+    /// or the site's answer was short. Kept, with their label, until they
+    /// are listed again or the profile is removed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unlisted: bool,
+    /// Fields this build does not know, written back as they were read.
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Whether `q` (a `--patient` value) is the id `id`: case aside, as
@@ -77,9 +89,11 @@ impl Members {
 pub fn record(store: &ConfigStore, profile: &ProfileName, people: &mut [Person]) -> Result<(), CliError> {
     let members: Members = store.load::<Config>()?.profiles.settings(profile)?;
     let stale = |p: &Person, m: Option<&Member>| {
-        m.is_none_or(|m| m.member_role.as_deref() != p.role || m.signed_in != p.signed_in)
+        m.is_none_or(|m| m.member_role.as_deref() != p.role || m.signed_in != p.signed_in || m.unlisted)
     };
-    let changed = people.iter().any(|p| stale(p, members.members.get(&p.id)));
+    let listed = |id: &str| people.iter().any(|p| p.id == id);
+    let changed = people.iter().any(|p| stale(p, members.members.get(&p.id)))
+        || members.members.iter().any(|(id, m)| !m.unlisted && !listed(id));
     for p in people.iter_mut() {
         p.label = members.members.get(&p.id).and_then(|m| m.label.clone());
     }
@@ -88,10 +102,14 @@ pub fn record(store: &ConfigStore, profile: &ProfileName, people: &mut [Person])
     }
     let mut config = store.load::<Config>()?;
     let mut fresh: Members = config.profiles.settings(profile)?;
+    for (id, m) in fresh.members.iter_mut() {
+        m.unlisted = !people.iter().any(|p| &p.id == id);
+    }
     for p in people.iter() {
         let m = fresh.members.entry(p.id.clone()).or_default();
         m.member_role = p.role.map(str::to_string);
         m.signed_in = p.signed_in;
+        m.unlisted = false;
     }
     config.profiles.set_settings(profile, &fresh)?;
     store.save(&config)
@@ -140,25 +158,49 @@ pub fn run(
                 "a label cannot be a member's id: --patient could not tell them apart".into(),
             ));
         }
-        if members.by_label(w).is_some_and(|holder| holder != id) {
-            return Err(CliError::Usage(
-                "another member of this profile has that label; a label names one member".into(),
-            ));
+        if let Some(holder) = members.by_label(w).filter(|holder| *holder != id).map(str::to_string) {
+            // Held by someone the latest family read did not list: the
+            // label moves, rather than stay blocked by a person the user
+            // can no longer see.
+            let gone = members.members.get(&holder).is_some_and(|m| m.unlisted);
+            if !gone {
+                return Err(CliError::Usage(
+                    "another member of this profile has that label; a label names one member".into(),
+                ));
+            }
+            if let Some(m) = members.members.get_mut(&holder) {
+                m.label = None;
+            }
+            note(
+                cli,
+                "the label moves from a person the latest `patients list` did not list",
+            );
         }
+    }
+    if members.members.get(&id).is_some_and(|m| m.unlisted) {
+        note(
+            cli,
+            "this person was not in the latest `patients list`: they may have left the account",
+        );
     }
     let member = members
         .members
         .get_mut(&id)
         .expect("the id was found among the members");
-    if member.label != who {
-        member.label = who.clone();
-        let member = member.clone();
+    let before = config.profiles.settings::<Members>(profile)?;
+    member.label = who;
+    let member = member.clone();
+    if members != before {
         config.profiles.set_settings(profile, &members)?;
         store.save(&config)?;
-        return print(cli, out, &id, &member);
     }
-    let member = member.clone();
     print(cli, out, &id, &member)
+}
+
+fn note(cli: &Cli, msg: &str) {
+    if !cli.common.quiet {
+        eprintln!("{msg}");
+    }
 }
 
 /// The member as `patient-list/v1` holding it alone, or a line.
@@ -228,6 +270,32 @@ mod tests {
         assert_eq!(kept.members["p1"].member_role.as_deref(), Some("subscriber"));
         // Nobody is removed by a read that lists fewer people.
         assert!(kept.members.contains_key("p2"));
+        // p2 was not in the second read: kept, marked, label and all.
+        assert!(kept.members["p2"].unlisted);
+        assert!(!kept.members["p1"].unlisted);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn settings_this_build_does_not_know_survive_a_write() {
+        let dir = std::env::temp_dir().join(format!("caremark-labels-later-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"profiles":{"adult1":{"later":1,"members":{"p1":{"label":"alex","also_later":true}}}}}"#,
+        )
+        .unwrap();
+        let store = ConfigStore::new(BIN).with_override(Some(path.clone()));
+        let profile = ProfileName::parse("adult1").unwrap();
+        let mut read = vec![person("p1", Some("subscriber"))];
+        record(&store, &profile, &mut read).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let adult1 = &raw["profiles"]["adult1"];
+        assert_eq!(adult1["later"], 1, "{raw}");
+        assert_eq!(adult1["members"]["p1"]["also_later"], true, "{raw}");
+        assert_eq!(adult1["members"]["p1"]["member_role"], "subscriber", "{raw}");
+        assert_eq!(read[0].label.as_deref(), Some("alex"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

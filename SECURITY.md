@@ -45,8 +45,10 @@ Report a vulnerability privately through GitHub's "Report a vulnerability"
   It holds no name the site gives. A `Patient.id` is a digest of short
   identifiers, which trying every value recovers, and a label is often a
   first name, so the file is as private as the records: do not sync,
-  share or commit it. `profiles remove <NAME>` deletes the profile's
-  entries with its settings.
+  share or commit it. A person the latest family read did not list stays,
+  marked `unlisted`, until they are listed again or `profiles remove
+  <NAME>` deletes the profile's entries with its settings. Their label
+  moves to anyone still listed who is given it.
 
 ## What caremark never does
 

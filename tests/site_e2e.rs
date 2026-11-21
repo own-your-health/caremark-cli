@@ -928,6 +928,34 @@ fn a_label_names_one_person_and_takes_no_request() {
 }
 
 #[test]
+fn a_label_held_by_someone_no_longer_listed_moves() {
+    let h = Household::new();
+    let ids = ids_by_first_name(&h);
+    h.json(&["patients", "label", "--patient", &ids["Jordan"], "kid"]);
+    // Jordan leaves the plan: the family read lists two people.
+    let mut v: Value =
+        serde_json::from_str(&std::fs::read_to_string("tests/fixtures/site/member-family.json").unwrap()).unwrap();
+    v["data"]["getFamilyInfo"]["familyMemberList"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|m| m["personCode"] != "003");
+    h.server.fault(Fault {
+        experience: FAMILY,
+        nth: None,
+        status: 200,
+        content_type: JSON,
+        body: v.to_string(),
+    });
+    assert_eq!(h.json(&["patients", "list"])["items"].as_array().unwrap().len(), 2);
+    // The label is free for someone still listed, and names them alone.
+    let doc = h.json(&["patients", "label", "--patient", &ids["Sam"], "kid"]);
+    assert_eq!(doc["items"][0]["label"], "kid");
+    let (code, lines) = h.stream(&["records", "export", "--patient", "kid", "--ndjson"]);
+    assert_eq!(code, 0);
+    assert_eq!(lines[0]["patient"]["id"], ids["Sam"].as_str());
+}
+
+#[test]
 fn a_label_that_would_name_two_people_is_refused() {
     let h = Household::new();
     let e = h
