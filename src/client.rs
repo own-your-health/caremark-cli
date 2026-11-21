@@ -160,12 +160,15 @@ pub struct Jar {
 }
 
 impl Jar {
+    /// A `Cookie` header's cookies, less the site's maintenance
+    /// waiting-room cookie, which is edge state, not the session's.
     pub fn parse(header: &str) -> Jar {
         let cookies = header
             .split(';')
             .filter_map(|pair| {
                 let (name, value) = pair.trim().split_once('=')?;
-                (!name.trim().is_empty()).then(|| (name.trim().to_string(), value.trim().to_string()))
+                let name = name.trim();
+                (!name.is_empty() && !maintenance_cookie(name)).then(|| (name.to_string(), value.trim().to_string()))
             })
             .collect();
         Jar {
@@ -186,12 +189,6 @@ impl Jar {
         self.cookies.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
     }
 
-    /// Whether the jar holds the site's maintenance waiting-room cookie
-    /// ([`in_maintenance`]).
-    pub fn in_maintenance(&self) -> bool {
-        self.cookies.iter().any(|(n, _)| maintenance_cookie(n))
-    }
-
     /// One `Set-Cookie` value: a new value replaces the cookie's, a new
     /// cookie is added, and an empty value or `Max-Age` of zero or less
     /// removes it. The other attributes (domain, path, expiry) are the
@@ -202,7 +199,9 @@ impl Jar {
             return;
         };
         let (name, value) = (name.trim(), value.trim());
-        if name.is_empty() {
+        // The waiting-room cookie is kept out of the session: a stale one
+        // would read every later 5xx as maintenance.
+        if name.is_empty() || maintenance_cookie(name) {
             return;
         }
         let expired = parts.any(|a| {
@@ -433,10 +432,18 @@ impl Client {
         };
         let content_type = header(CONTENT_TYPE);
         let retry_after = header(RETRY_AFTER);
+        // Maintenance is this answer's: a 503 that sets the waiting-room
+        // cookie, which the jar does not keep.
+        let mut sets_waiting_room = false;
         {
             let mut jar = self.jar.borrow_mut();
             for v in answer.headers().get_all(SET_COOKIE) {
                 if let Ok(v) = v.to_str() {
+                    sets_waiting_room |= v
+                        .split(';')
+                        .next()
+                        .and_then(|p| p.split_once('='))
+                        .is_some_and(|(n, _)| maintenance_cookie(n.trim()));
                     jar.apply(v);
                 }
             }
@@ -455,7 +462,7 @@ impl Client {
                 limit >> 20
             )));
         }
-        let maintenance = self.jar.borrow().in_maintenance();
+        let maintenance = status == 503 && sets_waiting_room;
         Ok(Answer {
             what,
             status,
@@ -561,8 +568,8 @@ pub struct Answer {
     pub content_type: Option<String>,
     pub retry_after: Option<String>,
     pub body: Vec<u8>,
-    /// The jar held the site's maintenance waiting-room cookie once the
-    /// answer's cookies were applied.
+    /// A 503 whose own `Set-Cookie` carried the site's maintenance
+    /// waiting-room cookie.
     pub maintenance: bool,
 }
 
@@ -637,7 +644,7 @@ pub fn refuse(a: &Answer, profile: &ProfileName) -> Result<(), CliError> {
             };
             Err(e)
         }
-        500..=599 if a.maintenance => Err(CliError::Upstream(format!(
+        503 if a.maintenance => Err(CliError::Upstream(format!(
             "caremark.com is down for maintenance: it answered {what} with HTTP {status} and set its maintenance \
              waiting-room cookie"
         ))
@@ -690,6 +697,15 @@ mod tests {
         ));
         assert!(!in_maintenance("a=1; akavpau_vp_www_example_com_queue=x"));
         assert!(!in_maintenance("maintenance=1"));
+        // A stale waiting-room cookie is never kept, so it cannot mislabel
+        // a later 5xx.
+        let mut jar = Jar::parse("a=1; akavpau_vp_www_example_com_example_maintenance=x");
+        assert_eq!(jar.header(), "a=1");
+        jar.apply("akavpau_vp_www_example_com_example_maintenance=y; Path=/");
+        assert_eq!(jar.header(), "a=1");
+        assert!(!jar.changed());
+        let plain = refuse(&answer(500, "text/html", ""), &p).unwrap_err();
+        assert!(!plain.message().contains("maintenance"), "{plain}");
         // The policy's name ends in _maintenance; the word elsewhere is not it.
         assert!(!in_maintenance("akavpau_vp_www_example_com_maintenance_queue=x"));
         assert!(!in_maintenance("akavpau_vp_maintenance_example_com_queue=x"));

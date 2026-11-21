@@ -284,7 +284,8 @@ fn check_at(client: &reqwest::blocking::Client, url: &str, keys: &SiteKeys, cook
     };
     if let Some(said) = pk_cli_http::inconclusive(&answer) {
         // The waiting-room cookie is in the browser's jar, which the
-        // capture hands over whole.
+        // capture hands over whole; only a 503 with it is read as
+        // maintenance, and the stored session never keeps it.
         let down = said.status == 503 && crate::client::in_maintenance(cookie_header);
         return Confirm::Undecided {
             reason: if down {

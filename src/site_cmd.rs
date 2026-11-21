@@ -326,18 +326,23 @@ fn pick<'a>(people: &'a [Person], q: Option<&str>) -> Result<&'a Person, CliErro
     if let Some(p) = people.iter().find(|p| crate::labels::is_the_id(q, &p.id)) {
         return Ok(p);
     }
-    // A label before a first name: the household chose it to name one
-    // person.
-    if let Some(p) = people
-        .iter()
-        .find(|p| crate::labels::is_the_label(q, p.label.as_deref()))
-    {
-        return Ok(p);
-    }
     let by_name: Vec<&Person> = people
         .iter()
         .filter(|p| p.first_name.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(q)))
         .collect();
+    // A label names one person; one that is also someone else's first name
+    // could mean either, so it is refused rather than guessed.
+    if let Some(p) = people
+        .iter()
+        .find(|p| crate::labels::is_the_label(q, p.label.as_deref()))
+    {
+        if by_name.iter().any(|other| other.id != p.id) {
+            return Err(CliError::Usage(format!(
+                "--patient is one person's label and another's first name; pass the id from `{BIN} patients list`"
+            )));
+        }
+        return Ok(p);
+    }
     match by_name.as_slice() {
         [one] => Ok(one),
         [] => Err(CliError::NotFound("--patient names no one on this account".into())

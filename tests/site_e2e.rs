@@ -906,6 +906,16 @@ fn a_label_names_one_person_and_takes_no_request() {
         "{}",
         e.message()
     );
+    // A label that is another person's first name could mean either.
+    h.json(&["patients", "label", "--patient", "grownup", "sam"]);
+    let e = h.run(&["rx", "list", "--patient", "Sam"]).unwrap_err();
+    assert_eq!(e.exit_code(), 2);
+    assert!(
+        e.message().contains("one person's label and another's first name"),
+        "{}",
+        e.message()
+    );
+    h.json(&["patients", "label", "--patient", "sam", "grownup"]);
     assert!(ids.values().all(|id| !e.message().contains(id.as_str())));
     // The same label again changes nothing; --clear removes it; clearing an
     // unset label changes nothing.

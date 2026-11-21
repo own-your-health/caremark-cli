@@ -58,10 +58,11 @@ These come from the household's plan and are not negotiable.
 
 ## The member site
 
-The household chose the member site (no API serves an employer plan's
-member; `docs/api.md` § Route), accepting the risk under its Terms of Use
-(decision aceea06c). Be gentle with it: one request at a time, at least
-`client::PACE` apart, no bulk crawling.
+caremark reads the member site because no API serves an employer plan's
+member (`docs/api.md` § Route). The site's Terms of Use carry a risk each
+user weighs for themselves (the README's "The site's terms"). Be gentle
+with it: one request at a time, at least `client::PACE` apart, no bulk
+crawling.
 
 - **Sign-in.** `auth login --browser --profile <NAME>` opens Chrome in the
   profile's kept browser profile (`Launch::profile_name`) at the site's

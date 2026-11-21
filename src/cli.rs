@@ -176,7 +176,9 @@ pub enum PatientsCmd {
     List,
     /// Set the household's own name for one person on the account, or
     /// clear it (patient-list/v1). Makes no request: the person is one
-    /// `patients list` has listed.
+    /// `patients list` has listed. `--patient` on every command then reads
+    /// an id, else a label, else a first name; a label that is another
+    /// person's first name is refused there as ambiguous.
     Label(LabelArgs),
 }
 
