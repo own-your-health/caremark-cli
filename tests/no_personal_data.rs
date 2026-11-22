@@ -83,10 +83,33 @@ fn without_uuids(line: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
+/// `line` with each lowercase hex digest (a run of 32 or more hex digits
+/// holding a letter, such as a pinned SHA-256) blanked: its digit runs are
+/// not numbers.
+fn without_digests(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        let digest = run.len() >= 32 && run.bytes().any(|b| b.is_ascii_lowercase());
+        out.push_str(if digest { "<digest>" } else { run.as_str() });
+        run.clear();
+    };
+    for c in line.chars() {
+        if c.is_ascii_digit() || ('a'..='f').contains(&c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
 /// The personal-data shapes on one line, each as `kind value`.
 fn scan_line(line: &str) -> Vec<String> {
     let mut findings = Vec::new();
-    let line = &without_uuids(line);
+    let line = &without_digests(&without_uuids(line));
     let phoneish = line.replace(['(', ')', '-', '.', ' '], "");
     for n in digits_run(line, 7)
         .into_iter()
@@ -319,6 +342,7 @@ fn the_scanner_flags_real_shapes_and_passes_dummies() {
         "lives at 1234 NW Oak St, Somewhere",
         "claim 7342918",
         "id 13ed331c-3e9c-4fdf-bab2-6396a12a3623 then 7342918",
+        "bad1234567 is not a digest",
     ] {
         assert!(!scan_line(real).is_empty(), "missed: {real}");
     }
@@ -331,6 +355,7 @@ fn the_scanner_flags_real_shapes_and_passes_dummies() {
         "100 Example St, Exampleton",
         "$16,000.00",
         "experience 656e55d9-691d-4b48-b5fa-cefa54284336",
+        "SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
     ] {
         assert!(
             scan_line(dummy).is_empty(),

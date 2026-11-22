@@ -102,7 +102,7 @@ the export ends incomplete and `costs` and `rx list` fail, exit 5.
 
 ## What medrec reads
 
-medrec (piekstra/medrec-cli#17) reads a `MedicationDispense`'s
+medrec (own-your-health/medrec-cli#17) reads a `MedicationDispense`'s
 `medicationCodeableConcept` (RxNorm, else NDC), `whenHandedOver`, `status`,
 `quantity`, `daysSupply.value`, `dosageInstruction[0].text`, `type` and
 `performer[0].actor.display`; and a pharmacy `ExplanationOfBenefit`'s
