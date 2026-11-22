@@ -112,6 +112,15 @@ The pages renew the token with `POST {refreshTokenApi.url}/<experience>`
 (`x-clientId: core_access`, `x-route: account-gke-rke`, body
 `{"data":{"inputReq":{"lob":"pbm"}}}`). caremark does not.
 
+**How long a session lasts** is not measured yet. The pages' own timers
+(their scripts, read 2026-11-22) are the nearest evidence: on caremark
+they renew the token every 5 minutes (feature flag
+`caremark_refresh_time_minutes`, default 5), warn "you'll be signed out
+automatically in a few moments" after 12 minutes without activity on the
+page, and sign out at 14.5. Those timers run in the browser. Whether
+the site ends an unrefreshed token as soon, and whether a data read
+extends it, takes a signed-in read to learn. caremark sends no keepalive.
+
 ### Experience API
 
 The site's data comes from one endpoint shape, a `POST` of
