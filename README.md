@@ -50,7 +50,9 @@ maintenance. Try again later.
 
 Everything else (lists, exports, imports) runs unattended while the
 session lasts. The site decides how long that is, and caremark has not
-measured it yet. A command run after it has ended is exit 3, naming
+measured it yet. The site's own pages sign out after about 15 minutes
+without activity, so it may be that short. A command run after it has
+ended is exit 3, naming
 `caremark auth login --browser --profile <NAME> --overwrite`. Nothing is
 read with an ended session, and nothing stored is lost.
 
