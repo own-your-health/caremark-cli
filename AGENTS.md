@@ -7,7 +7,7 @@ per profile) and emits FHIR for the household's medical-records system
 piekstra-cli/1 and the `health-records/v1` profile, on the `pk-cli-*` crates
 from [cli-common](https://github.com/piekstra/cli-common) and
 `pk-med-records` from
-[medical-common](https://github.com/piekstra/medical-common), which owns the
+[medical-common](https://github.com/own-your-health/medical-common), which owns the
 records stream and the profile's DTOs. Every `pk-cli-*` stays on the
 cli-common tag medical-common pins.
 

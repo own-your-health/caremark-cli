@@ -8,7 +8,7 @@ whose medical insurer is another company. It reads that member's
 prescriptions, fills, pharmacy claims and what each fill cost from the
 member site, www.caremark.com, as the member sees them signed in. It writes
 them as FHIR (`records-stream/v1`) for
-[medrec](https://github.com/piekstra/medrec-cli) (`medrec import --from
+[medrec](https://github.com/own-your-health/medrec-cli) (`medrec import --from
 caremark`) or any tool that reads FHIR, and as JSON lists. It is read-only:
 nothing it does writes to Caremark.
 
@@ -20,11 +20,11 @@ out, and lists every read caremark makes).
 ## Quick start
 
 medrec is a separate CLI
-([install](https://github.com/piekstra/medrec-cli#install), v0.2.8 or
+([install](https://github.com/own-your-health/medrec-cli#install), v0.2.8 or
 later); caremark's own commands work without it.
 
 ```sh
-cargo install --git https://github.com/piekstra/caremark-cli --locked
+cargo install --git https://github.com/own-your-health/caremark-cli --locked
 caremark profiles add me                            # one profile per caremark.com login
 caremark auth login --browser --profile me          # a Chrome window opens: sign in there yourself
 caremark --profile me patients list                 # the people on the account, with their ids
@@ -69,7 +69,7 @@ the bot check: you sign in yourself, in a real browser.
 ## Install
 
 ```sh
-cargo install --git https://github.com/piekstra/caremark-cli --locked
+cargo install --git https://github.com/own-your-health/caremark-cli --locked
 # or download a release: caremark-<target>.tar.gz, then `caremark self-update` later
 ```
 
